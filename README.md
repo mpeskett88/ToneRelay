@@ -25,12 +25,10 @@ all risk. Back up your presets before you write to the device.
 
 ## Install
 
-Replace `OWNER` with the GitHub account that hosts this repository.
-
 1. Clone the repository:
 
 ```sh
-git clone git@github.com:OWNER/ToneRelay.git
+git clone git@github.com:mpeskett88/ToneRelay.git
 cd ToneRelay
 ```
 
