@@ -86,14 +86,26 @@
   box-sizing: border-box;
 }
 
+html {
+  height: 100%;
+  min-height: 100dvh;
+  min-height: -webkit-fill-available;
+}
+
 html,
 body,
 #root {
   margin: 0;
-  height: 100%;
   overflow: hidden;
   background: var(--bg-base);
   color: var(--text-primary);
+}
+
+body,
+#root {
+  height: 100%;
+  min-height: 100%;
+  min-height: -webkit-fill-available;
 }
 
 button,
@@ -110,14 +122,15 @@ select:focus-visible {
 }
 
 .app {
-  height: 100dvh;
-  max-height: 100dvh;
+  height: var(--app-height, 100dvh);
+  max-height: var(--app-height, 100dvh);
+  min-height: 100%;
+  min-height: -webkit-fill-available;
   overflow: hidden;
   display: flex;
   flex-direction: column;
   padding-top: env(safe-area-inset-top, 0px);
   padding-right: env(safe-area-inset-right, 0px);
-  padding-bottom: env(safe-area-inset-bottom, 0px);
   padding-left: env(safe-area-inset-left, 0px);
 }
 
@@ -221,7 +234,7 @@ select:focus-visible {
   z-index: 20;
   top: calc(env(safe-area-inset-top, 0px) + 3.25rem);
   left: env(safe-area-inset-left, 0px);
-  bottom: env(safe-area-inset-bottom, 0px);
+  bottom: 0;
   width: min(16rem, 86vw);
   min-height: 0;
   overflow: auto;
@@ -887,7 +900,6 @@ button.inspector-clear:active {
   background: var(--bg-elevated);
   border-top: 1px solid var(--border);
   border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
-  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 .model-sheet-head {
@@ -1171,7 +1183,7 @@ input[type="number"] {
   }
 
   .connect {
-    margin: auto auto calc(1.5rem + env(safe-area-inset-bottom, 0px));
+    margin: auto auto 1.5rem;
   }
 
   .chain-board {
@@ -1221,7 +1233,7 @@ input[type="number"] {
   }
 
   .inspector {
-    padding: var(--space-3) 14px calc(var(--space-5) + env(safe-area-inset-bottom, 0px));
+    padding: var(--space-3) 14px var(--space-5);
   }
 
   .inspector-head h2 {
