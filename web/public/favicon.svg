@@ -1,8 +1,15 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
   <rect width="32" height="32" fill="#05070a"/>
-  <g stroke="#00e8c4" stroke-width="1.6" stroke-linejoin="miter" stroke-linecap="butt">
+  <g
+    fill="none"
+    stroke="#00e8c4"
+    stroke-width="2.4"
+    stroke-linejoin="round"
+    stroke-linecap="round"
+    transform="translate(16 16) rotate(-45) scale(1.18) translate(-16 -16)"
+  >
     <path d="M3 16h6"/>
-    <path d="M9 16l2.2-2.2 2.2 2.2-2.2 2.2z" fill="#05070a"/>
+    <path d="M9 16l2.2-2.2 2.2 2.2-2.2 2.2z"/>
     <path d="M13.4 16l3.4-5.2h6.4L26.6 16l-3.4 5.2h-6.4z"/>
     <path d="M26.6 16H29"/>
   </g>
