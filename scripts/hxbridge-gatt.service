@@ -1,0 +1,18 @@
+[Unit]
+Description=ToneRelay BLE GATT server (Helix USB bridge)
+After=bluetooth.service hxbridge-bt-prep.service hxbridge-usb.service
+Requires=bluetooth.service
+Wants=hxbridge-bt-prep.service hxbridge-usb.service
+
+[Service]
+Type=simple
+User=admin
+Group=admin
+SupplementaryGroups=plugdev bluetooth
+Environment=HXBRIDGE_USB_SOCK=/tmp/hxbridge-usb.sock
+ExecStart=/usr/bin/python3 /home/admin/hxblue/hxbridge/gatt_server.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,13 @@
+[package]
+name = "hx-proto"
+description = "The USB message format Line 6 Helix and HX guitar pedals speak, in Rust"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# Deliberately dependency-free: this crate is pure codec with no I/O, so it can
+# be reused from a desktop transport, an Android JNI shim, or a test harness
+# without dragging anything along.
+[dependencies]

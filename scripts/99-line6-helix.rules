@@ -1,0 +1,3 @@
+# Line 6 Helix / HX USB devices. Lets a ToneRelay user in plugdev
+# open the vendor interface without root.
+SUBSYSTEM=="usb", ATTR{idVendor}=="0e41", MODE="0660", GROUP="plugdev"

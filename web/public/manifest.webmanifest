@@ -1,0 +1,16 @@
+{
+  "name": "ToneRelay",
+  "short_name": "ToneRelay",
+  "display": "standalone",
+  "start_url": "/",
+  "background_color": "#05070a",
+  "theme_color": "#05070a",
+  "icons": [
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

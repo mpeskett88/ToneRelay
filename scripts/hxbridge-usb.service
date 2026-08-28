@@ -1,0 +1,17 @@
+[Unit]
+Description=ToneRelay TonePush USB session daemon
+After=local-fs.target
+
+[Service]
+Type=simple
+User=__HXBRIDGE_USER__
+Group=__HXBRIDGE_USER__
+SupplementaryGroups=plugdev
+WorkingDirectory=__HXBRIDGE_ROOT__
+Environment=HXBRIDGE_USB_SOCK=/tmp/hxbridge-usb.sock
+ExecStart=__HXBRIDGE_ROOT__/target/release/hxbridge-usb
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

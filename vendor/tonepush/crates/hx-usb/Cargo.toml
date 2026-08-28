@@ -1,0 +1,20 @@
+[package]
+name = "hx-usb"
+description = "Connect to a Line 6 Helix or HX guitar pedal over USB and edit what it is playing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+hx-proto.workspace = true
+# nusb is pure Rust, so there is no libusb to cross-compile. It also exposes
+# Device::from_fd, which is the only way in on Android: the Java USB Host API
+# hands the app a file descriptor and nothing else.
+nusb = "0.2"
+thiserror.workspace = true
+# A backup bundle's manifest is JSON, so a person can open one and read what it
+# holds without this program.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

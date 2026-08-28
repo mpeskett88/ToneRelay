@@ -1,0 +1,12 @@
+[Unit]
+Description=Unblock Bluetooth and power hci0 (ToneRelay)
+After=bluetooth.service
+Wants=bluetooth.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/rfkill unblock bluetooth
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

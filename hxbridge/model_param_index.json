@@ -1,0 +1,109 @@
+{
+  "_comment": "USB type-30 key 28 (param index) and key 119 encoding, keyed by .hlx @model. source=live was proven on Helix Floor 3.80. inferred-ui-order is untested; do not send those writes.",
+  "HD2_AmpEssexA30": {
+    "params": [
+      {"name": "Drive", "index": 0, "usb": "f32", "source": "live"},
+      {"name": "Bass", "index": 1, "usb": "f32", "source": "live"},
+      {"name": "Cut", "index": 2, "usb": "f32", "source": "live"},
+      {"name": "Treble", "index": 3, "usb": "f32", "source": "live"},
+      {"name": "Presence", "index": 4, "usb": "f32", "source": "live"},
+      {"name": "ChVol", "index": 5, "usb": "f32", "source": "live"},
+      {"name": "Master", "index": 6, "usb": "f32", "source": "live"},
+      {"name": "Sag", "index": 7, "usb": "f32", "source": "live"},
+      {"name": "Hum", "index": 8, "usb": "f32", "source": "live"},
+      {"name": "Ripple", "index": 9, "usb": "f32", "source": "live"},
+      {"name": "Bias", "index": 10, "usb": "f32", "source": "live"},
+      {"name": "BiasX", "index": 11, "usb": "f32", "source": "live"}
+    ]
+  },
+  "HD2_WahUKWah846": {
+    "params": [
+      {"name": "Pedal", "index": 0, "usb": "f32", "source": "live", "notes": "UI Position 0–100%"},
+      {"name": "Mix", "index": 1, "usb": "f32", "source": "live", "notes": "0–1 = 0–100%"},
+      {"name": "Level", "index": 2, "usb": "f32", "source": "live", "notes": "dB"}
+    ]
+  },
+  "HD2_VolPanVol": {
+    "params": [
+      {"name": "Pedal", "index": 0, "usb": "f32", "source": "live", "notes": "UI Position 0–100%"},
+      {"name": "VolumeTaper", "index": 1, "usb": "bool", "source": "live", "notes": "false=Linear, true=Logarithmic"}
+    ]
+  },
+  "HD2_DistDerangedMaster": {
+    "params": [
+      {"name": "Drive", "index": 0, "usb": "f32", "source": "live", "notes": "UI/10"},
+      {"name": "Bass", "index": 1, "usb": "f32", "source": "live", "notes": "UI/10"},
+      {"name": "Treble", "index": 2, "usb": "f32", "source": "live", "notes": "UI/10"},
+      {"name": "Level", "index": 3, "usb": "f32", "source": "live", "notes": "dB"}
+    ]
+  },
+  "HD2_CabMicIr_2x12SilverBellWithPan": {
+    "params": [
+      {"name": "Mic", "index": 0, "usb": "u8", "source": "live"},
+      {"name": "Position", "index": 1, "usb": "f32", "source": "live"},
+      {"name": "Distance", "index": 2, "usb": "f32", "source": "live"},
+      {"name": "Angle", "index": 3, "usb": "f32", "source": "live", "notes": "UI snaps 0 or 45 degrees; wire is degrees as float"},
+      {"name": "LowCut", "index": 4, "usb": "f32", "source": "live"},
+      {"name": "HighCut", "index": 5, "usb": "f32", "source": "live"},
+      {"name": "Level", "index": 6, "usb": "f32", "source": "live", "notes": "dB, -60 to +6, 0.1 step"},
+      {"name": "Pan", "index": 7, "usb": "f32", "source": "live", "notes": "0=Left 100, 0.5=Center, 1=Right 100, 201 UI steps"},
+      {"name": "Delay", "index": 8, "usb": "f32", "source": "live", "notes": "seconds; UI 0.5–50 ms; 0 likely Auto"}
+    ]
+  },
+  "HD2_Tremolo60sBiasTrem": {
+    "params": [
+      {"name": "Speed", "index": 0, "usb": "f32", "source": "live", "notes": "UI/10 when TempoSync off; when on, Speed knob shows SyncSelect1"},
+      {"name": "Intensity", "index": 1, "usb": "f32", "source": "live", "notes": "UI/10"},
+      {"name": "Mode", "index": 2, "usb": "bool", "source": "live", "notes": "false=Tremolo, true=Vibrato"},
+      {"name": "Spread", "index": 3, "usb": "f32", "source": "live", "notes": "UI/10"},
+      {"name": "Level", "index": 4, "usb": "f32", "source": "live", "notes": "dB"},
+      {"name": "SyncSelect1", "index": 5, "usb": "u8", "source": "live", "notes": "note division; 3 displayed as 1/2 (third list item)"},
+      {"name": "TempoSync1", "index": 6, "usb": "bool", "source": "live"}
+    ]
+  },
+  "VIC_ReverbDynRoom": {
+    "params": [
+      {"name": "Decay", "index": 0, "usb": "f32", "source": "live", "notes": "UI time; 0.40 wrote as 0.4"},
+      {"name": "PreDelay", "index": 1, "usb": "f32", "source": "live", "notes": "seconds; 0.30 = 300 ms; UI max 100 ms"},
+      {"name": "Damping", "index": 2, "usb": "f32", "source": "live", "notes": "Hz; UI 500 Hz–20 kHz"},
+      {"name": "Diffusion", "index": 3, "usb": "f32", "source": "live", "notes": "0–1 = 0–100%"},
+      {"name": "MatrFreq", "index": 4, "usb": "f32", "source": "live", "notes": "Mot Rate; USB = UI/10 (UI 0–10, 0.1 step)"},
+      {"name": "Mix", "index": 5, "usb": "f32", "source": "live", "notes": "0–1 = 0–100%"},
+      {"name": "BassFreq", "index": 6, "usb": "f32", "source": "live", "notes": "Low Freq Hz; UI 20–500 Hz"},
+      {"name": "BassBoost", "index": 7, "usb": "f32", "source": "live", "notes": "Low Gain dB; UI −15 to +3"},
+      {"name": "LowCut", "index": 8, "usb": "f32", "source": "live", "notes": "Hz; UI Off then 20 Hz–1 kHz; 1.5 Hz displayed Off"},
+      {"name": "HighCut", "index": 9, "usb": "f32", "source": "live", "notes": "Hz; UI 1–20 kHz then Off"},
+      {"name": "ERLevel", "index": 10, "usb": "f32", "source": "live", "notes": "Early Reflections; UI 0–2, 0.1 step"},
+      {"name": "Level", "index": 11, "usb": "f32", "source": "live", "notes": "dB"}
+    ]
+  },
+  "HD2_AppDSPFlow1Input": {
+    "params": [
+      {"name": "noiseGate", "index": 0, "usb": "bool", "source": "live", "notes": "Gate; false=Off, true=On"},
+      {"name": "threshold", "index": 1, "usb": "f32", "source": "live", "notes": "Threshold dB"},
+      {"name": "decay", "index": 2, "usb": "f32", "source": "live", "notes": "seconds; UI 10–1000 ms; 0.40 = 400 ms"}
+    ]
+  },
+  "HD2_AppDSPFlowOutput": {
+    "params": [
+      {"name": "pan", "index": 0, "usb": "f32", "source": "live", "notes": "0–1; 0.5=Center; Path 1 Output USB block 9"},
+      {"name": "gain", "index": 1, "usb": "f32", "source": "live", "notes": "dB; Path 1 Output USB block 9"}
+    ]
+  },
+  "HD2_AppDSPFlowSplitY": {
+    "params": [
+      {"name": "BalanceA", "index": 0, "usb": "f32", "source": "live", "notes": "0–1 like pan; 0.20=Left 60; USB 10 when split exists"},
+      {"name": "BalanceB", "index": 1, "usb": "f32", "source": "live", "notes": "0–1 like pan; 0.80=Right 60"}
+    ]
+  },
+  "HD2_AppDSPFlowJoin": {
+    "params": [
+      {"name": "A Level", "index": 0, "usb": "f32", "source": "live", "notes": "dB; USB block 19 when merge exists (Path 1)"},
+      {"name": "A Pan", "index": 1, "usb": "f32", "source": "live", "notes": "0–1"},
+      {"name": "B Level", "index": 2, "usb": "f32", "source": "live", "notes": "dB"},
+      {"name": "B Pan", "index": 3, "usb": "f32", "source": "live", "notes": "0–1"},
+      {"name": "B Polarity", "index": 4, "usb": "bool", "source": "live", "notes": "true=Inverted"},
+      {"name": "Level", "index": 5, "usb": "f32", "source": "live", "notes": "dB"}
+    ]
+  }
+}
