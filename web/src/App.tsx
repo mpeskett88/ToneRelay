@@ -132,6 +132,24 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [modelCats, setModelCats] = useState<ModelCategory[]>([]);
 
+  useLayoutEffect(() => {
+    function syncAppHeight() {
+      const h = window.visualViewport?.height ?? window.innerHeight;
+      document.documentElement.style.setProperty("--app-height", `${Math.round(h)}px`);
+    }
+    syncAppHeight();
+    window.addEventListener("resize", syncAppHeight);
+    window.addEventListener("orientationchange", syncAppHeight);
+    window.visualViewport?.addEventListener("resize", syncAppHeight);
+    window.visualViewport?.addEventListener("scroll", syncAppHeight);
+    return () => {
+      window.removeEventListener("resize", syncAppHeight);
+      window.removeEventListener("orientationchange", syncAppHeight);
+      window.visualViewport?.removeEventListener("resize", syncAppHeight);
+      window.visualViewport?.removeEventListener("scroll", syncAppHeight);
+    };
+  }, []);
+
   async function applyState(state: {
     blocks?: DumpBlock[];
     paths?: TopoPath[];

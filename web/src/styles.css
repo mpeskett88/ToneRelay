@@ -235,6 +235,7 @@ select:focus-visible {
   top: calc(env(safe-area-inset-top, 0px) + 3.25rem);
   left: env(safe-area-inset-left, 0px);
   bottom: 0;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
   width: min(16rem, 86vw);
   min-height: 0;
   overflow: auto;
@@ -812,7 +813,7 @@ select:focus-visible {
 .inspector {
   flex: 1;
   overflow: auto;
-  padding: var(--space-4) 18px var(--space-5);
+  padding: var(--space-4) 18px calc(var(--space-5) + env(safe-area-inset-bottom, 0px));
 }
 
 .inspector-title {
@@ -900,6 +901,7 @@ button.inspector-clear:active {
   background: var(--bg-elevated);
   border-top: 1px solid var(--border);
   border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 .model-sheet-head {
@@ -1183,7 +1185,7 @@ input[type="number"] {
   }
 
   .connect {
-    margin: auto auto 1.5rem;
+    margin: auto auto calc(1.5rem + env(safe-area-inset-bottom, 0px));
   }
 
   .chain-board {
@@ -1233,7 +1235,7 @@ input[type="number"] {
   }
 
   .inspector {
-    padding: var(--space-3) 14px var(--space-5);
+    padding: var(--space-3) 14px calc(var(--space-5) + env(safe-area-inset-bottom, 0px));
   }
 
   .inspector-head h2 {
