@@ -28,7 +28,8 @@ Options:
 
 Environment:
   HXBRIDGE_HTTP_PORT   Same as --port, if --port is not passed
-  HX_EDIT_INSTALLER    Path to an HX Edit .dmg or .exe to extract for model names
+  HX_EDIT_INSTALLER    Path to an HX Edit installer for model names.
+                       On a Raspberry Pi use the Windows .exe; .dmg needs macOS.
 EOF
 }
 
@@ -170,16 +171,27 @@ find_installer() {
     printf '%s\n' "$HX_EDIT_INSTALLER"
     return 0
   fi
-  local f
+  local f exes=() dmgs=()
   shopt -s nullglob
-  for f in "$ROOT"/HX_Edit*.dmg "$ROOT"/HX_Edit*.exe "$PWD"/HX_Edit*.dmg "$PWD"/HX_Edit*.exe; do
-    if [[ -f "$f" ]]; then
-      printf '%s\n' "$f"
-      shopt -u nullglob
-      return 0
-    fi
+  for f in \
+    "$ROOT"/HX_Edit*.exe "$ROOT"/HXEdit*.exe "$PWD"/HX_Edit*.exe "$PWD"/HXEdit*.exe \
+    "$ROOT"/HX_Edit*.dmg "$ROOT"/HXEdit*.dmg "$PWD"/HX_Edit*.dmg "$PWD"/HXEdit*.dmg; do
+    [[ -f "$f" ]] || continue
+    case "$f" in
+      *.exe | *.EXE) exes+=("$f") ;;
+      *.dmg | *.DMG) dmgs+=("$f") ;;
+    esac
   done
   shopt -u nullglob
+  # The Windows .exe extracts with 7-Zip on Linux. The .dmg needs macOS.
+  if [[ ${#exes[@]} -gt 0 ]]; then
+    printf '%s\n' "${exes[0]}"
+    return 0
+  fi
+  if [[ ${#dmgs[@]} -gt 0 ]]; then
+    printf '%s\n' "${dmgs[0]}"
+    return 0
+  fi
   return 1
 }
 
@@ -264,33 +276,94 @@ install_apt() {
     usbutils
     avahi-daemon
     libnss-mdns
+    xz-utils
   )
-  local need_node=0
-  if ! command -v node >/dev/null 2>&1; then
-    need_node=1
-  else
-    local major
-    major="$(node -v | sed 's/^v//' | cut -d. -f1)"
-    if [[ -z "$major" || "$major" -lt 20 ]]; then
-      need_node=1
-    fi
-  fi
-  if [[ "$need_node" -eq 1 ]]; then
-    pkgs+=(nodejs npm)
-  fi
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y
-  apt-get install -y "${pkgs[@]}"
+  apt-get install -y --no-install-recommends "${pkgs[@]}"
+}
+
+node_major() {
+  command -v node >/dev/null 2>&1 || return 1
+  node -v | sed 's/^v//' | cut -d. -f1
+}
+
+# Official Node tarball includes npm. Debian's npm package pulls in hundreds of
+# node-* modules (webpack, babel, mesa, x11) that this project does not use.
+install_node_official() {
+  local arch tmp line sha tarball extracted
+  case "$(uname -m)" in
+    aarch64 | arm64) arch=linux-arm64 ;;
+    x86_64) arch=linux-x64 ;;
+    armv7l) arch=linux-armv7l ;;
+    *) return 1 ;;
+  esac
+  tmp="$(mktemp -d)"
+  if ! curl -fsSL "https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt" -o "$tmp/SHASUMS256.txt"; then
+    rm -rf "$tmp"
+    return 1
+  fi
+  line="$(awk -v arch="$arch" '
+    $2 ~ ("^node-v22\\.[0-9.]+-" arch "\\.tar\\.xz$") { print; exit }
+  ' "$tmp/SHASUMS256.txt")"
+  if [[ -z "$line" ]]; then
+    rm -rf "$tmp"
+    return 1
+  fi
+  sha="${line%% *}"
+  tarball="${line##* }"
+  tarball="${tarball#./}"
+  log "Installing Node.js from nodejs.org ($tarball)."
+  if ! curl -fL "https://nodejs.org/dist/latest-v22.x/$tarball" -o "$tmp/$tarball"; then
+    rm -rf "$tmp"
+    return 1
+  fi
+  if ! (cd "$tmp" && printf '%s  %s\n' "$sha" "$tarball" | sha256sum -c --status); then
+    err "Node.js tarball checksum mismatch"
+    rm -rf "$tmp"
+    return 1
+  fi
+  tar -xJf "$tmp/$tarball" -C "$tmp"
+  extracted="$(find "$tmp" -mindepth 1 -maxdepth 1 -type d -name 'node-v22*' -print -quit)"
+  if [[ -z "$extracted" || ! -x "$extracted/bin/node" ]]; then
+    rm -rf "$tmp"
+    return 1
+  fi
+  rm -rf /usr/local/lib/nodejs
+  mkdir -p /usr/local/lib
+  mv "$extracted" /usr/local/lib/nodejs
+  ln -sfn /usr/local/lib/nodejs/bin/node /usr/local/bin/node
+  ln -sfn /usr/local/lib/nodejs/bin/npm /usr/local/bin/npm
+  ln -sfn /usr/local/lib/nodejs/bin/npx /usr/local/bin/npx
+  rm -rf "$tmp"
+  hash -r
+  return 0
+}
+
+install_node() {
+  local major
+  major="$(node_major || true)"
+  if [[ -n "$major" && "$major" -ge 20 ]]; then
+    log "Using Node.js $(node -v)."
+    return 0
+  fi
+  if install_node_official && [[ "$(node_major || true)" -ge 20 ]]; then
+    log "Using Node.js $(node -v)."
+    return 0
+  fi
+  log "Official Node.js download failed; installing Debian nodejs and npm."
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get install -y --no-install-recommends nodejs npm
   if ! command -v node >/dev/null 2>&1; then
     err "Node.js is not installed"
     exit 1
   fi
-  local major
-  major="$(node -v | sed 's/^v//' | cut -d. -f1)"
-  if [[ "$major" -lt 20 ]]; then
-    err "Node.js 20 or newer is required (found $(node -v))"
+  major="$(node_major || true)"
+  if [[ -z "$major" || "$major" -lt 20 ]]; then
+    err "Node.js 20 or newer is required (found $(node -v 2>/dev/null || echo none))"
     exit 1
   fi
+  log "Using Node.js $(node -v)."
 }
 
 install_rust() {
@@ -304,7 +377,7 @@ install_rust() {
   fi
   if ! as_user "command -v rustup >/dev/null"; then
     log "Installing Rust for $INSTALL_USER (rustup). Need $MSRV or newer (found ${ver:-none})."
-    as_user "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y"
+    as_user "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal"
   else
     log "Updating Rust (need $MSRV or newer; found ${ver:-none})."
     as_user "rustup update stable"
@@ -321,7 +394,12 @@ ensure_submodule() {
   if [[ -f "$ROOT/vendor/tonepush/crates/hx-usb/Cargo.toml" ]]; then
     return 0
   fi
-  err "vendor/tonepush crates are missing (hx-proto, hx-usb, hx-catalog)"
+  log "Initializing vendor/tonepush submodule."
+  as_user "cd $(printf %q "$ROOT") && git submodule update --init --recursive"
+  if [[ -f "$ROOT/vendor/tonepush/crates/hx-usb/Cargo.toml" ]]; then
+    return 0
+  fi
+  err "vendor/tonepush crates are missing (hx-proto, hx-usb, hx-catalog). Clone with --recurse-submodules."
   exit 1
 }
 
@@ -359,26 +437,40 @@ install_catalog() {
 
   local installer=""
   if installer="$(find_installer)"; then
+    case "$installer" in
+      *.dmg | *.DMG)
+        if ! command -v hdiutil >/dev/null 2>&1; then
+          log "HX Edit .dmg files can only be read on macOS. On this Pi, use the Windows .exe."
+          log "Then: ./scripts/extract-hx-catalog.sh /path/to/HX_Edit.exe"
+          log "  and: sudo systemctl restart hxbridge-usb.service"
+          return 0
+        fi
+        ;;
+    esac
     log "Extracting catalog from $installer."
     export DEBIAN_FRONTEND=noninteractive
-    apt-get install -y p7zip-full
+    apt-get install -y --no-install-recommends p7zip-full
     if [[ ! -f "$ROOT/vendor/tonepush/tools/hxresources/extract.sh" ]]; then
-      err "TonePush extract script is missing"
-      exit 1
+      log "TonePush extract script is missing; continuing without a catalog."
+      return 0
     fi
-    as_user "cd $(printf %q "$ROOT") && ./scripts/extract-hx-catalog.sh $(printf %q "$installer")"
+    if ! as_user "cd $(printf %q "$ROOT") && ./scripts/extract-hx-catalog.sh $(printf %q "$installer")"; then
+      log "Catalog extract failed. The editor still runs without model names."
+      log "On a Raspberry Pi, pass the Windows HX Edit .exe, not the macOS .dmg."
+      return 0
+    fi
     if catalog_populated "$dest"; then
       log "Catalog installed at $dest."
       CATALOG_UPDATED=1
       return 0
     fi
-    err "extract finished but $dest does not look like an HX Edit catalog"
+    log "Extract finished but $dest does not look like an HX Edit catalog."
     return 0
   fi
 
   log "No catalog found. The editor still runs. To add names later:"
   log "  copy HX Edit resources into $dest"
-  log "  or run: ./scripts/extract-hx-catalog.sh /path/to/HX_Edit.dmg"
+  log "  or run: ./scripts/extract-hx-catalog.sh /path/to/HX_Edit.exe"
   log "  then: sudo systemctl restart hxbridge-usb.service"
 }
 
@@ -450,6 +542,7 @@ log "The first compile can take a long time on a Raspberry Pi."
 
 CATALOG_UPDATED=0
 install_apt
+install_node
 choose_port
 log "HTTP port: $HXBRIDGE_HTTP_PORT"
 write_conf

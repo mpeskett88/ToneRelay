@@ -137,16 +137,17 @@ export default function App() {
       const h = window.visualViewport?.height ?? window.innerHeight;
       document.documentElement.style.setProperty("--app-height", `${Math.round(h)}px`);
     }
+    const viewport = window.visualViewport;
     syncAppHeight();
     window.addEventListener("resize", syncAppHeight);
     window.addEventListener("orientationchange", syncAppHeight);
-    window.visualViewport?.addEventListener("resize", syncAppHeight);
-    window.visualViewport?.addEventListener("scroll", syncAppHeight);
+    viewport?.addEventListener("resize", syncAppHeight);
+    viewport?.addEventListener("scroll", syncAppHeight);
     return () => {
       window.removeEventListener("resize", syncAppHeight);
       window.removeEventListener("orientationchange", syncAppHeight);
-      window.visualViewport?.removeEventListener("resize", syncAppHeight);
-      window.visualViewport?.removeEventListener("scroll", syncAppHeight);
+      viewport?.removeEventListener("resize", syncAppHeight);
+      viewport?.removeEventListener("scroll", syncAppHeight);
     };
   }, []);
 

@@ -28,7 +28,7 @@ all risk. Back up your presets before you write to the device.
 1. Clone the repository:
 
 ```sh
-git clone git@github.com:mpeskett88/ToneRelay.git
+git clone --recurse-submodules https://github.com/mpeskett88/ToneRelay.git
 cd ToneRelay
 ```
 
@@ -42,7 +42,9 @@ The first run compiles the USB daemon and the web GUI. That can take a long
 time on a Pi. The script prefers HTTP port 80, then 8080, and asks you for a
 port if both are taken. Pass `--port N` to choose a port yourself.
 
-When it finishes, it prints URLs for the editor.
+When it finishes, it prints URLs for the editor. If it stops with an error
+before that, the systemd services are not installed yet. Fix the error and
+run the installer again.
 
 ## Open the editor
 
@@ -60,22 +62,22 @@ are Line 6's and are not included here.
 The editor still talks to the Helix without them. Knobs may show numbers, and
 you cannot open the model sheet until the catalog is present.
 
-If you have an HX Edit installer (`.dmg` or `.exe`) on the Pi, point the
-install script at it:
+On a Raspberry Pi, use the Windows HX Edit installer (`.exe`). The macOS
+`.dmg` only extracts on macOS. Point the install script at the `.exe`:
 
 ```sh
-sudo HX_EDIT_INSTALLER=/path/to/HX_Edit.dmg ./scripts/install.sh
+sudo HX_EDIT_INSTALLER=/path/to/HX_Edit.exe ./scripts/install.sh
 ```
 
 To add the catalog later:
 
 ```sh
-./scripts/extract-hx-catalog.sh /path/to/HX_Edit.dmg
+./scripts/extract-hx-catalog.sh /path/to/HX_Edit.exe
 sudo systemctl restart hxbridge-usb.service
 ```
 
-You can also copy an existing `~/.local/share/tonepush/hx-resources` folder
-from a machine that already extracted HX Edit.
+You can also extract the catalog on a Mac from the `.dmg`, then copy
+`~/.local/share/tonepush/hx-resources` onto the Pi.
 
 ## Safety
 

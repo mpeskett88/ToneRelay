@@ -2,8 +2,9 @@
 # Copy HX Edit catalog files onto this machine. Those files are Line 6's.
 # Do not commit them.
 #
-# On a Mac (or any host with the installer):
-#   ./scripts/extract-hx-catalog.sh
+# On a Raspberry Pi, pass the Windows installer (.exe). The macOS .dmg
+# only extracts on macOS (hdiutil).
+#   ./scripts/extract-hx-catalog.sh /path/to/HX_Edit.exe
 #   ./scripts/extract-hx-catalog.sh /path/to/HX_Edit_3.82.dmg
 #
 # Then copy ~/.local/share/tonepush/hx-resources to the Pi if you extracted
