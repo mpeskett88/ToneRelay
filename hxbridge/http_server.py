@@ -14,6 +14,7 @@ import logging
 import ssl
 import subprocess
 import sys
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from aiohttp import WSMsgType, web
@@ -26,6 +27,14 @@ HERE = Path(__file__).resolve().parent
 STATIC = HERE / "static"
 CERT_DIR = HERE / "certs"
 CATALOG = HERE / "model_param_index.json"
+
+# index.html names the hashed JS/CSS. If Safari caches it, a rebuild is invisible
+# until the home-screen app is killed. Hashed /assets/ can be cached forever.
+HTML_NO_CACHE = {
+    "Cache-Control": "no-cache, no-store, must-revalidate",
+    "Pragma": "no-cache",
+}
+ASSET_CACHE = {"Cache-Control": "public, max-age=31536000, immutable"}
 
 
 def ensure_lab_cert(cert_dir: Path) -> tuple[Path, Path]:
@@ -109,7 +118,7 @@ async def index(_request: web.Request) -> web.StreamResponse:
             content_type="text/plain",
             status=503,
         )
-    return web.FileResponse(index_path)
+    return web.FileResponse(index_path, headers=HTML_NO_CACHE)
 
 
 async def spa_or_file(request: web.Request) -> web.StreamResponse:
@@ -122,12 +131,25 @@ async def spa_or_file(request: web.Request) -> web.StreamResponse:
     except ValueError:
         raise web.HTTPBadRequest() from None
     if candidate.is_file():
+        if candidate.suffix in {".html", ".webmanifest"}:
+            return web.FileResponse(candidate, headers=HTML_NO_CACHE)
         return web.FileResponse(candidate)
     return await index(request)
 
 
+@web.middleware
+async def cache_control(
+    request: web.Request,
+    handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
+) -> web.StreamResponse:
+    resp = await handler(request)
+    if request.path.startswith("/assets/"):
+        resp.headers.update(ASSET_CACHE)
+    return resp
+
+
 def build_app() -> web.Application:
-    app = web.Application()
+    app = web.Application(middlewares=[cache_control])
     app.router.add_get("/api/info", api_info)
     app.router.add_get("/api/catalog", api_catalog)
     app.router.add_get("/ws", ws_handler)

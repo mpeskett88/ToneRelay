@@ -48,7 +48,9 @@ import {
   type JunctionPoint,
   type TopoPath,
 } from "./chain";
-import { CategoryIcon, TrashIcon } from "./icons";
+import EqGraph from "./EqGraph";
+import { isParametricEq } from "./eqCurve";
+import { CategoryIcon, GraphIcon, TrashIcon } from "./icons";
 
 const catalog = rawCatalog as unknown as Catalog;
 
@@ -1608,6 +1610,11 @@ function Inspector({
   const paint = categoryPaint(node.category);
   const category = categoryTitle(node.category);
   const empty = node.id.startsWith("empty:");
+  const eqDump = node.dumps.find((d) => isParametricEq(d.model_id, d.model));
+  const [eqOpen, setEqOpen] = useState(false);
+  useEffect(() => {
+    setEqOpen(false);
+  }, [node.id]);
   const showCategory = !empty && category.toLowerCase() !== node.title.toLowerCase();
   const head = (
     <>
@@ -1640,6 +1647,17 @@ function Inspector({
             {head}
           </header>
         )}
+        {eqDump && !empty ? (
+          <button
+            type="button"
+            className="inspector-graph"
+            data-testid="eq-graph-open"
+            aria-label="Open EQ graph"
+            onClick={() => setEqOpen(true)}
+          >
+            <GraphIcon />
+          </button>
+        ) : null}
         {onClear ? (
           <button
             type="button"
@@ -1652,6 +1670,16 @@ function Inspector({
           </button>
         ) : null}
       </div>
+      {eqOpen && eqDump ? (
+        <EqGraph
+          dump={eqDump}
+          client={client}
+          blocks={blocks}
+          setBlocks={setBlocks}
+          setError={setError}
+          onClose={() => setEqOpen(false)}
+        />
+      ) : null}
       {empty
         ? null
         : node.dumps.map((dump, i) => {

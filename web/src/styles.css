@@ -926,6 +926,30 @@ button.inspector-clear:active {
   background: #f8717122;
 }
 
+button.inspector-graph {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  min-width: 3rem;
+  min-height: var(--touch);
+  padding: 0;
+  background: var(--bg-elevated-2);
+  color: var(--accent);
+  border: 1px solid var(--accent-muted);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+button.inspector-graph:active {
+  background: var(--accent-muted);
+}
+
+.graph-icon {
+  display: block;
+}
+
 .trash-icon {
   display: block;
 }
@@ -1207,6 +1231,149 @@ input[type="number"] {
   padding: 6px var(--space-2);
 }
 
+.eq-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elevated);
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+    env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  touch-action: none;
+}
+
+.eq-overlay-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--touch);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+
+.eq-overlay-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.eq-overlay-copy h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--fs-20);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.eq-readout {
+  margin: 2px 0 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-14);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eq-overlay-close {
+  flex: none;
+  min-width: var(--touch);
+  min-height: var(--touch);
+  padding: 0 var(--space-3);
+  background: transparent;
+  color: var(--accent);
+  border: 0;
+  cursor: pointer;
+  font-size: var(--fs-14);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.eq-rotate-hint {
+  display: none;
+  margin: 0;
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--fs-12);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.eq-plot {
+  display: block;
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  touch-action: none;
+  background: var(--bg-base);
+  cursor: crosshair;
+}
+
+.eq-grid,
+.eq-grid-major,
+.eq-grid-zero {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.eq-grid-major {
+  stroke: #1a2e36cc;
+}
+
+.eq-grid-zero {
+  stroke: var(--path);
+  stroke-width: 1.25;
+}
+
+.eq-curve {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.eq-handle-hit {
+  fill: transparent;
+  stroke: none;
+}
+
+.eq-handle-mark {
+  stroke: var(--bg-base);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+rect.eq-handle-mark {
+  fill: var(--text-secondary);
+}
+
+.eq-handle.is-off .eq-handle-mark {
+  fill: var(--bg-elevated-2);
+  stroke: var(--text-muted);
+  opacity: 0.7;
+}
+
+.eq-handle.is-on .eq-handle-mark {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
+
+.eq-axis {
+  display: flex;
+  justify-content: space-between;
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  flex: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     transition: none !important;
@@ -1300,6 +1467,10 @@ input[type="number"] {
 
   .inspector-head h2 {
     font-size: 1.35rem;
+  }
+
+  .eq-rotate-hint {
+    display: block;
   }
 
   .row {

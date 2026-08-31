@@ -142,3 +142,12 @@ export function TrashIcon() {
     </svg>
   );
 }
+
+export function GraphIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden className="graph-icon">
+      <path d="M4 18h16M4 6v12" {...stroke} />
+      <path d="M6 14c2-6 4-2 6-6s4 2 6-4" {...stroke} />
+    </svg>
+  );
+}
