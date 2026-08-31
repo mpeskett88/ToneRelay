@@ -134,7 +134,25 @@ export default function App() {
 
   useLayoutEffect(() => {
     function syncAppHeight() {
-      const h = window.visualViewport?.height ?? window.innerHeight;
+      const vv = window.visualViewport;
+      const layout = window.innerHeight;
+      const visibleBottom = vv ? vv.height + vv.offsetTop : layout;
+      // Keyboard (or similar overlay): visual viewport is much shorter. Use it
+      // so the inspector stays above the keys.
+      if (vv && layout - visibleBottom > 120) {
+        document.documentElement.style.setProperty("--app-height", `${Math.round(vv.height)}px`);
+        return;
+      }
+      // iOS visualViewport — and sometimes innerHeight — stop at the
+      // home-indicator line, which is exactly where the bottom rounded
+      // corners begin. screen.width/height stay portrait-oriented on iOS, so
+      // pick the side that matches the current orientation. Ignore screen
+      // size on desktop, where it is the monitor, not the window.
+      const portrait = layout >= window.innerWidth;
+      const screenH = portrait
+        ? Math.max(window.screen.width, window.screen.height)
+        : Math.min(window.screen.width, window.screen.height);
+      const h = Math.abs(screenH - layout) < 100 ? Math.max(layout, screenH) : layout;
       document.documentElement.style.setProperty("--app-height", `${Math.round(h)}px`);
     }
     const viewport = window.visualViewport;
@@ -1526,8 +1544,8 @@ function Inspector({
       <span className="inspector-mark" style={{ backgroundColor: paint.bg, color: paint.fg }}>
         <CategoryIcon category={node.category} />
       </span>
-      <div>
-        <h2>{node.title}</h2>
+      <div className="inspector-copy">
+        <h2 title={node.title}>{node.title}</h2>
         {empty ? <p className="hint">Tap to add a model</p> : showCategory && <p className="hint">{category}</p>}
       </div>
     </>

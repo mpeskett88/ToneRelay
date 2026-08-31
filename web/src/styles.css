@@ -71,6 +71,8 @@
   --space-5: 24px;
   --space-6: 32px;
   --touch: 44px;
+  --header-pad-y: 0px;
+  --header-chrome: calc(var(--header-pad-y) * 2 + var(--touch) + 1px);
   --fs-12: 0.75rem;
   --fs-14: 0.875rem;
   --fs-16: 1rem;
@@ -87,9 +89,9 @@
 }
 
 html {
-  height: 100%;
-  min-height: 100dvh;
-  min-height: -webkit-fill-available;
+  height: -webkit-fill-available;
+  height: 100lvh;
+  height: var(--app-height, 100lvh);
 }
 
 html,
@@ -104,8 +106,6 @@ body,
 body,
 #root {
   height: 100%;
-  min-height: 100%;
-  min-height: -webkit-fill-available;
 }
 
 button,
@@ -122,14 +122,10 @@ select:focus-visible {
 }
 
 .app {
-  height: var(--app-height, 100dvh);
-  max-height: var(--app-height, 100dvh);
-  min-height: 100%;
-  min-height: -webkit-fill-available;
+  height: 100%;
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  padding-top: env(safe-area-inset-top, 0px);
   padding-right: env(safe-area-inset-right, 0px);
   padding-left: env(safe-area-inset-left, 0px);
 }
@@ -142,7 +138,8 @@ select:focus-visible {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: 10px var(--space-4);
+  padding: calc(var(--header-pad-y) + env(safe-area-inset-top, 0px)) var(--space-4)
+    var(--header-pad-y);
   border-bottom: 1px solid var(--border);
   background: var(--bg-elevated);
   min-width: 0;
@@ -232,10 +229,9 @@ select:focus-visible {
   display: none;
   position: fixed;
   z-index: 20;
-  top: calc(env(safe-area-inset-top, 0px) + 3.25rem);
+  top: calc(env(safe-area-inset-top, 0px) + var(--header-chrome));
   left: env(safe-area-inset-left, 0px);
   bottom: 0;
-  padding-bottom: env(safe-area-inset-bottom, 0px);
   width: min(16rem, 86vw);
   min-height: 0;
   overflow: auto;
@@ -358,7 +354,7 @@ select:focus-visible {
   display: block;
   position: fixed;
   inset: 0;
-  top: calc(env(safe-area-inset-top, 0px) + 3.25rem);
+  top: calc(env(safe-area-inset-top, 0px) + var(--header-chrome));
   z-index: 15;
   background: #0008;
   border: 0;
@@ -488,12 +484,11 @@ select:focus-visible {
   --node-max: 9.25rem;
   --wire-min: 2.75rem;
   --wire-max: 3.75rem;
-  --io-min: 0.85rem;
   --grid-min: calc(
-    var(--label) + 2 * var(--touch) + 2 * var(--io-min) + 8 * var(--node-min) + 7 * var(--wire-min)
+    var(--label) + 2 * var(--touch) + 8 * var(--node-min) + 9 * var(--wire-min)
   );
   --grid-max: calc(
-    var(--label) + 2 * var(--touch) + 2 * 2.25rem + 8 * var(--node-max) + 7 * var(--wire-max)
+    var(--label) + 2 * var(--touch) + 8 * var(--node-max) + 9 * var(--wire-max)
   );
   display: grid;
   width: 100%;
@@ -502,10 +497,10 @@ select:focus-visible {
   grid-template-columns:
     var(--label)
     var(--touch)
-    minmax(var(--io-min), 0.3fr)
+    minmax(var(--wire-min), 0.45fr)
     repeat(7, minmax(var(--node-min), 1fr) minmax(var(--wire-min), 0.45fr))
     minmax(var(--node-min), 1fr)
-    minmax(var(--io-min), 0.3fr)
+    minmax(var(--wire-min), 0.45fr)
     var(--touch);
   grid-template-rows: auto auto;
   align-items: center;
@@ -813,7 +808,7 @@ select:focus-visible {
 .inspector {
   flex: 1;
   overflow: auto;
-  padding: var(--space-4) 18px calc(var(--space-5) + env(safe-area-inset-bottom, 0px));
+  padding: var(--space-4) 18px var(--space-5);
 }
 
 .inspector-title {
@@ -831,6 +826,11 @@ select:focus-visible {
   min-width: 0;
   border-left: 4px solid var(--accent);
   padding-left: var(--space-3);
+}
+
+.inspector-copy {
+  min-width: 0;
+  flex: 1;
 }
 
 button.inspector-pick {
@@ -901,7 +901,6 @@ button.inspector-clear:active {
   background: var(--bg-elevated);
   border-top: 1px solid var(--border);
   border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
-  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 .model-sheet-head {
@@ -965,6 +964,9 @@ button.inspector-clear:active {
   font-size: 1.7rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .inspector-head .hint {
@@ -972,6 +974,9 @@ button.inspector-clear:active {
   text-transform: uppercase;
   letter-spacing: 0.12em;
   font-size: var(--fs-12);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .block-params h3 {
@@ -980,6 +985,9 @@ button.inspector-clear:active {
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .row {
@@ -1156,12 +1164,19 @@ input[type="number"] {
 }
 
 @media (orientation: portrait) {
+  :root {
+    --header-pad-y: 4px;
+  }
+
   .top {
     position: relative;
     z-index: 30;
     gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
-    min-height: 3.75rem;
+    padding: calc(var(--header-pad-y) + env(safe-area-inset-top, 0px)) var(--space-3)
+      var(--header-pad-y);
+    min-height: calc(
+      var(--touch) + var(--header-pad-y) * 2 + env(safe-area-inset-top, 0px) + 1px
+    );
   }
 
   .top h1 {
@@ -1175,17 +1190,12 @@ input[type="number"] {
     z-index: 31;
   }
 
-  .list,
-  .menu-open .scrim {
-    top: calc(env(safe-area-inset-top, 0px) + 3.75rem);
-  }
-
   .list {
     width: min(20rem, 86vw);
   }
 
   .connect {
-    margin: auto auto calc(1.5rem + env(safe-area-inset-bottom, 0px));
+    margin: auto auto 1.5rem;
   }
 
   .chain-board {
@@ -1235,7 +1245,7 @@ input[type="number"] {
   }
 
   .inspector {
-    padding: var(--space-3) 14px calc(var(--space-5) + env(safe-area-inset-bottom, 0px));
+    padding: var(--space-3) 14px var(--space-5);
   }
 
   .inspector-head h2 {
