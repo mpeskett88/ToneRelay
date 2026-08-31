@@ -442,6 +442,7 @@ select:focus-visible {
 .editor-pane {
   min-width: 0;
   min-height: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
 }
@@ -502,12 +503,16 @@ select:focus-visible {
     minmax(var(--node-min), 1fr)
     minmax(var(--wire-min), 0.45fr)
     var(--touch);
-  grid-template-rows: auto auto;
+  grid-template-rows: auto;
   align-items: center;
   column-gap: 0;
   row-gap: 18px;
   position: relative;
   padding-bottom: var(--space-1);
+}
+
+.dsp-grid.has-b {
+  grid-template-rows: auto auto;
 }
 
 .dsp-grid .path-label {
@@ -793,6 +798,51 @@ select:focus-visible {
   color: var(--accent-ink);
   border-color: transparent;
   font-weight: 600;
+}
+
+.snap-menu {
+  display: none;
+  position: relative;
+  flex: none;
+  min-width: 0;
+}
+
+.snap-menu-btn {
+  max-width: 7.5rem;
+  min-width: var(--touch);
+  min-height: var(--touch);
+  padding: 0 var(--space-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--bg-elevated-2);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--fs-14);
+}
+
+.snap-menu-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 40;
+  margin: 0;
+  padding: var(--space-1);
+  min-width: 12rem;
+  max-height: min(70vh, 22rem);
+  overflow: auto;
+  list-style: none;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px #0008;
+}
+
+.snap-menu-list .snap {
+  width: 100%;
+  text-align: left;
 }
 
 .cat-icon {
@@ -1303,5 +1353,48 @@ input[type="number"] {
 
   .select-pill {
     font-size: var(--fs-14);
+  }
+}
+
+/* Phone landscape: one chain row, snapshots in the header, inspector takes the rest. */
+@media (orientation: landscape) and (max-height: 500px) {
+  .top {
+    gap: var(--space-2);
+    padding: calc(var(--header-pad-y) + env(safe-area-inset-top, 0px)) var(--space-3)
+      var(--header-pad-y);
+  }
+
+  .top h1 {
+    font-size: 1.1rem;
+  }
+
+  .chain-board {
+    flex: 0 0 auto;
+    max-height: calc(5.6rem + var(--space-2) * 2);
+    overflow-x: auto;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: var(--space-2);
+  }
+
+  .dsp-grid {
+    padding-bottom: 0;
+  }
+
+  .snap-strip {
+    display: none;
+  }
+
+  .snap-menu {
+    display: block;
+  }
+
+  .inspector {
+    min-height: 0;
+    padding: var(--space-2) 14px var(--space-3);
+  }
+
+  .inspector-head h2 {
+    font-size: 1.2rem;
   }
 }

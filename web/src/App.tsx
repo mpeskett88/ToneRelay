@@ -130,6 +130,8 @@ export default function App() {
   const [snapshots, setSnapshots] = useState<string[]>([]);
   const [snapshotIndex, setSnapshotIndex] = useState<number | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [snapOpen, setSnapOpen] = useState(false);
+  const snapMenuRef = useRef<HTMLDivElement>(null);
   const [modelCats, setModelCats] = useState<ModelCategory[]>([]);
 
   useLayoutEffect(() => {
@@ -168,6 +170,29 @@ export default function App() {
       viewport?.removeEventListener("scroll", syncAppHeight);
     };
   }, []);
+
+  useEffect(() => {
+    if (!snapOpen) {
+      return;
+    }
+    const onPtr = (ev: PointerEvent) => {
+      if (snapMenuRef.current?.contains(ev.target as Node)) {
+        return;
+      }
+      setSnapOpen(false);
+    };
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") {
+        setSnapOpen(false);
+      }
+    };
+    window.addEventListener("pointerdown", onPtr);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("pointerdown", onPtr);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [snapOpen]);
 
   async function applyState(state: {
     blocks?: DumpBlock[];
@@ -467,7 +492,10 @@ export default function App() {
           type="button"
           aria-label={menuOpen ? "Close preset list" : "Open preset list"}
           aria-expanded={menuOpen}
-          onClick={() => setMenuOpen((v) => !v)}
+          onClick={() => {
+            setSnapOpen(false);
+            setMenuOpen((v) => !v);
+          }}
         >
           <span />
           <span />
@@ -482,6 +510,48 @@ export default function App() {
           {presetName ? ` · ${presetName}` : ""}
           {` · ${setlistLabel(setlist, setlists)}`}
         </span>
+        {snapshots.length > 0 && (
+          <div className="snap-menu" ref={snapMenuRef}>
+            <button
+              type="button"
+              className="snap-menu-btn"
+              data-testid="snap-menu"
+              aria-haspopup="listbox"
+              aria-expanded={snapOpen}
+              aria-label={
+                snapshotIndex != null
+                  ? `Snapshots, ${snapshots[snapshotIndex] || `S${snapshotIndex + 1}`}`
+                  : "Snapshots"
+              }
+              onClick={() => setSnapOpen((v) => !v)}
+            >
+              {snapshotIndex != null
+                ? snapshots[snapshotIndex] || `S${snapshotIndex + 1}`
+                : "Snap"}
+            </button>
+            {snapOpen && (
+              <ul className="snap-menu-list" role="listbox" aria-label="Snapshots">
+                {snapshots.map((name, i) => (
+                  <li key={i}>
+                    <button
+                      type="button"
+                      role="option"
+                      data-testid={`snap-menu-item-${i}`}
+                      className={i === snapshotIndex ? "snap active" : "snap"}
+                      aria-selected={i === snapshotIndex}
+                      onClick={() => {
+                        setSnapOpen(false);
+                        void selectSnapshot(i);
+                      }}
+                    >
+                      {name || `S${i + 1}`}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
         {busy && <span className="busy">{busy}</span>}
       </header>
       {error && <p className="error banner" data-testid="error-banner">{error}</p>}
