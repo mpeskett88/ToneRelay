@@ -7,6 +7,8 @@ or mobile device, via WiFi, providing a truly wireless HX-Edit-like experience.
 
 Verified on Helix Floor firmware 3.80.
 
+![Desktop View](images/desktop.png)
+
 ## Disclaimer
 
 ToneRelay is an independent project. It is not affiliated with, authorized,
@@ -18,6 +20,10 @@ The software is provided "as is", without warranty of any kind. You assume
 all risk. Back up your presets before you write to the device.
 
 ## Current Features
+
+<img src="images/four-paths.PNG" alt="Mobile View with Four Paths" width="300"><img src="images/preset-list.PNG" alt="Preset List" width="300">
+<img src="images/parametric-eq.PNG" alt="Parametric EQ Graph View" width="600">
+<img src="images/mobile-landscape.PNG" alt="Mobile Landscape View" width="600">
 
 * Browser-based GUI adapts to any screen size.
 * Currently optimized for mobile devices in portrait mode.
