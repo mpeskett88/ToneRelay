@@ -248,6 +248,12 @@ export function bankPreset(index: number): { bank: number; preset: number } {
   return { bank: Math.floor(index / 16), preset: index % 16 };
 }
 
+export function helixSlotLabel(index: number): string {
+  const bank = Math.floor(index / 4) + 1;
+  const letter = "ABCD"[index % 4] ?? "A";
+  return `${String(bank).padStart(2, "0")}${letter}`;
+}
+
 export function blockMeta(block: number, subslot: number): EssexBlock | undefined {
   return ESSEX_BLOCKS.find((b) => b.block === block && b.subslot === subslot);
 }
@@ -353,6 +359,15 @@ export function choiceIndex(raw: number | boolean | undefined, count: number): n
     return count - 1;
   }
   return n;
+}
+
+/** First menu entry's wire value. IR Select is catalog min=1 (1-based). */
+export function choiceWireBase(min: number | undefined): number {
+  if (typeof min === "number" && Number.isFinite(min)) {
+    const n = Math.round(min);
+    return n > 0 ? n : 0;
+  }
+  return 0;
 }
 
 /** Menus this short show as a segmented row; longer lists stay a select. */

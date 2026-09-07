@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createGattReassembler, encodeGattChunks, rememberedTransport } from "./bridge";
-import { bankPreset, canPickModel, categoryOf, categoryPaint, categoryTitle, choiceIndex, dspHeadroom, dspRefuseMessage, dumpCategory, hxCategoryKind, knobToParam, modelFits, paramLabel, uiToWire, usesChoiceSegment, wireToUi, type DumpBlock } from "./catalog";
+import { bankPreset, canPickModel, categoryOf, categoryPaint, categoryTitle, choiceIndex, choiceWireBase, dspHeadroom, dspRefuseMessage, dumpCategory, helixSlotLabel, hxCategoryKind, knobToParam, modelFits, paramLabel, uiToWire, usesChoiceSegment, wireToUi, type DumpBlock } from "./catalog";
 
 describe("GATT chunks", () => {
   it("round-trips a payload larger than one chunk", () => {
@@ -39,6 +39,12 @@ describe("catalog helpers", () => {
     expect(bankPreset(17)).toEqual({ bank: 1, preset: 1 });
   });
 
+  it("labels Floor slots as 01A-style banks of four", () => {
+    expect(helixSlotLabel(0)).toBe("01A");
+    expect(helixSlotLabel(1)).toBe("01B");
+    expect(helixSlotLabel(17)).toBe("05B");
+  });
+
   it("maps Helix model names to chain categories", () => {
     expect(categoryOf("HD2_AmpEssexA30")).toBe("amp");
     expect(categoryOf("HD2_Tremolo60sBiasTrem")).toBe("modulation");
@@ -59,6 +65,10 @@ describe("catalog helpers", () => {
     expect(choiceIndex(false, 2)).toBe(0);
     expect(choiceIndex(-1, 4)).toBe(0);
     expect(choiceIndex(99, 4)).toBe(3);
+    expect(choiceWireBase(undefined)).toBe(0);
+    expect(choiceWireBase(0)).toBe(0);
+    expect(choiceWireBase(1)).toBe(1);
+    expect(choiceWireBase(1.2)).toBe(1);
     expect(usesChoiceSegment(6)).toBe(true);
     expect(usesChoiceSegment(7)).toBe(false);
     expect(usesChoiceSegment(0)).toBe(false);

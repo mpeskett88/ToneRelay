@@ -14,6 +14,7 @@ import subprocess
 
 PRESET_LINE = re.compile(r"^\s*(\d+):\s+(.*)\s*$")
 GLOBAL_IDS = {30, 134}
+HLX_MAX_BYTES = 2 * 1024 * 1024
 OPS = [
     "ping",
     "info",
@@ -29,6 +30,8 @@ OPS = [
     "set_model",
     "clear_block",
     "save_preset",
+    "export_preset",
+    "import_preset",
     "set_param",
     "get_param",
     "get_state",
@@ -257,6 +260,36 @@ def handle_command(raw: bytes) -> dict:
             body["name"] = name
         return run_usb(body, timeout=20.0)
 
+    if op == "export_preset":
+        setlist = _parse_int(cmd.get("setlist"), 0, 7)
+        index = _parse_int(cmd.get("index"), 0, 127)
+        if setlist is None:
+            return {"ok": False, "op": op, "error": "setlist must be 0-7"}
+        if index is None:
+            return {"ok": False, "op": op, "error": "index must be an integer 0-127"}
+        return run_usb({"op": op, "setlist": setlist, "index": index}, timeout=45.0)
+
+    if op == "import_preset":
+        setlist = _parse_int(cmd.get("setlist"), 0, 7)
+        index = _parse_int(cmd.get("index"), 0, 127)
+        if setlist is None:
+            return {"ok": False, "op": op, "error": "setlist must be 0-7"}
+        if index is None:
+            return {"ok": False, "op": op, "error": "index must be an integer 0-127"}
+        hlx = cmd.get("hlx")
+        if not isinstance(hlx, dict):
+            return {"ok": False, "op": op, "error": "hlx must be a JSON object"}
+        data = hlx.get("data")
+        if not isinstance(data, dict) or "tone" not in data:
+            return {"ok": False, "op": op, "error": "hlx must have data.tone"}
+        packed = json.dumps(hlx, separators=(",", ":"))
+        if len(packed.encode("utf-8")) > HLX_MAX_BYTES:
+            return {"ok": False, "op": op, "error": "hlx is too large"}
+        return run_usb(
+            {"op": op, "setlist": setlist, "index": index, "hlx": hlx},
+            timeout=45.0,
+        )
+
     if op == "select_preset":
         try:
             bank = int(cmd["bank"])
@@ -321,9 +354,9 @@ def handle_command(raw: bytes) -> dict:
         if err:
             return err
         block, param, subslot = ids
-        value = _parse_int(cmd.get("value"), 0, 127)
+        value = _parse_int(cmd.get("value"), 0, 128)
         if value is None:
-            return {"ok": False, "op": op, "error": "value must be an integer 0-127"}
+            return {"ok": False, "op": op, "error": "value must be an integer 0-128"}
         return run_usb(
             {"op": op, "block": block, "param": param, "subslot": subslot, "value": value}
         )

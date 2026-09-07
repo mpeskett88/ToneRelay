@@ -1,13 +1,16 @@
-use hx_catalog::Catalog;
+use hx_catalog::{empty_the_chain, slots_from_hlx, to_hlx, Catalog};
 use hx_proto::msgpack::Value as HxValue;
+use hx_proto::preset::Kind;
 use hx_proto::rpc;
 use hx_proto::ChannelId;
+use hx_proto::Preset;
 use hx_usb::Session;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 
 use crate::state::{knobs_json, routing_labels, slot_param, topology_from_preset};
 
 const GLOBAL_IDS: [i64; 2] = [30, 134];
+const HLX_MAX_BYTES: usize = 2 * 1024 * 1024;
 
 /// Front-panel changes drained from EVENTS between JSON requests.
 #[derive(Default)]
@@ -80,6 +83,8 @@ pub fn handle(
         "set_model" => set_model(session, catalog, obj, follow),
         "clear_block" => clear_block(session, obj, follow),
         "save_preset" => save_preset(session, obj, follow),
+        "export_preset" => export_preset(session, catalog, obj),
+        "import_preset" => import_preset(session, catalog, obj, follow),
         "set_param" => set_param(session, obj),
         "set_bool" => set_bool(session, obj),
         "set_int" => set_int(session, obj),
@@ -114,7 +119,7 @@ fn info(session: &mut Session, catalog: Option<&Catalog>, follow: &mut FollowSta
         "ops": [
             "ping", "info", "preset_info", "list_presets", "select_preset",
             "select_snapshot", "events", "list_setlists", "list_irs", "move_block", "set_model",
-            "clear_block", "save_preset",
+            "clear_block", "save_preset", "export_preset", "import_preset",
             "set_param", "get_param", "get_state", "topology",
             "set_bool", "set_int", "set_bypass", "set_trails",
             "set_global", "set_assign", "get_assign", "list_models",
@@ -348,6 +353,341 @@ fn save_preset(
         }),
         Err(e) => usb_err("save_preset", e),
     }
+}
+
+fn catalog_required<'a>(op: &str, catalog: Option<&'a Catalog>) -> Result<&'a Catalog, Value> {
+    catalog.ok_or_else(|| err(op, "HX Edit catalog required to import/export .hlx"))
+}
+
+fn parse_slot(obj: &Map<String, Value>, op: &str) -> Result<(i64, i64), Value> {
+    let Some(setlist) = parse_i64(obj.get("setlist"), 0, 7) else {
+        return Err(err(op, "setlist must be 0-7"));
+    };
+    let Some(index) = parse_i64(obj.get("index"), 0, 127) else {
+        return Err(err(op, "index must be an integer 0-127"));
+    };
+    Ok((setlist, index))
+}
+
+fn json_bytes(value: &Value) -> usize {
+    serde_json::to_vec(value)
+        .map(|b| b.len())
+        .unwrap_or(usize::MAX)
+}
+
+fn slot_name(session: &mut Session, setlist: i64, index: i64) -> String {
+    session
+        .presets(setlist)
+        .ok()
+        .and_then(|names| names.get(index as usize).cloned())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "preset".into())
+}
+
+fn hlx_name(document: &Value) -> String {
+    let raw = document
+        .pointer("/data/meta/name")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    let name = if raw.is_empty() { "Imported" } else { raw };
+    name.chars().take(32).collect()
+}
+
+fn hlx_filename(name: &str) -> String {
+    let mut stem = String::new();
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, ' ' | '-' | '_' | '.') {
+            stem.push(ch);
+        }
+    }
+    let stem = stem.trim().trim_matches('.');
+    let stem = if stem.is_empty() { "preset" } else { stem };
+    let stem: String = stem.chars().take(80).collect();
+    format!("{stem}.hlx")
+}
+
+fn rewrite_endpoint(dsp: &mut Map<String, Value>, key: &str, model: &str) {
+    let Some(node) = dsp.get_mut(key).and_then(Value::as_object_mut) else {
+        return;
+    };
+    let Some(Value::String(current)) = node.get_mut("@model") else {
+        return;
+    };
+    if current.starts_with("HelixStomp_") {
+        *current = model.to_string();
+    }
+}
+
+/// TonePush `to_hlx` hard-codes HX Stomp I/O symbols. Floor files use HD2_*.
+fn rewrite_floor_io(document: &mut Value) {
+    let Some(tone) = document
+        .pointer_mut("/data/tone")
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    for (dsp_name, input, output) in [
+        ("dsp0", "HD2_AppDSPFlow1Input", "HD2_AppDSPFlowOutput"),
+        ("dsp1", "HD2_AppDSPFlow2Input", "HD2_AppDSPFlow2Output"),
+    ] {
+        let Some(dsp) = tone.get_mut(dsp_name).and_then(Value::as_object_mut) else {
+            continue;
+        };
+        rewrite_endpoint(dsp, "inputA", input);
+        rewrite_endpoint(dsp, "inputB", input);
+        rewrite_endpoint(dsp, "outputA", output);
+        rewrite_endpoint(dsp, "outputB", output);
+    }
+}
+
+fn user_blocks(preset: &Preset) -> usize {
+    preset
+        .slots
+        .iter()
+        .filter(|s| matches!(s.kind, Kind::Block | Kind::Looper) && s.model.is_some())
+        .count()
+}
+
+fn needed_usb_slots(hlx: &Value) -> Vec<usize> {
+    let mut out = Vec::new();
+    let Some(tone) = hlx.pointer("/data/tone").and_then(Value::as_object) else {
+        return out;
+    };
+    // HX Edit files use @path/@position and omit @slot. Only dsp0/dsp1 are
+    // chains; snapshot "blocks" maps would match a naive "block*" scan.
+    for (dsp_name, fallback) in [("dsp0", 1usize), ("dsp1", 21usize)] {
+        let Some(dsp) = tone.get(dsp_name).and_then(Value::as_object) else {
+            continue;
+        };
+        for (key, block) in dsp {
+            if !key.starts_with("block") || key == "blocks" {
+                continue;
+            }
+            if let Some(slot) = block.get("@slot").and_then(Value::as_u64) {
+                out.push(slot as usize);
+            } else {
+                out.push(fallback);
+            }
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+fn restore_slot(
+    session: &mut Session,
+    setlist: i64,
+    index: i64,
+    name: &str,
+    backup: &Preset,
+) -> Result<(), hx_usb::Error> {
+    session.write_preset_at(setlist, index, name, backup)
+}
+
+fn maybe_restore(
+    session: &mut Session,
+    setlist: i64,
+    index: i64,
+    name: &str,
+    backup: Option<&[u8]>,
+) {
+    let Some(bytes) = backup else {
+        return;
+    };
+    let Some(prev) = Preset::parse(bytes) else {
+        return;
+    };
+    let _ = restore_slot(session, setlist, index, name, &prev);
+}
+
+fn drain_session(session: &mut Session, follow: &mut FollowState) {
+    for _ in 0..12 {
+        follow.note(&session.poll_notifications());
+        let _ = session.keepalive();
+    }
+}
+
+fn recover_import(
+    session: &mut Session,
+    setlist: i64,
+    index: i64,
+    name: &str,
+    backup: Option<&[u8]>,
+) {
+    if backup.is_some() {
+        maybe_restore(session, setlist, index, name, backup);
+        return;
+    }
+    let _ = session.clear_preset_at(setlist, index);
+}
+
+fn import_template(session: &mut Session, dest: Option<&Preset>) -> Result<Preset, Value> {
+    let bytes = match dest {
+        Some(preset) => preset.encode(),
+        None => session
+            .read_preset()
+            .map_err(|e| usb_err("import_preset", e))?
+            .encode(),
+    };
+    Preset::parse(&bytes)
+        .ok_or_else(|| err("import_preset", "the template document does not re-parse"))
+}
+
+fn export_preset(
+    session: &mut Session,
+    catalog: Option<&Catalog>,
+    obj: &Map<String, Value>,
+) -> Value {
+    let (setlist, index) = match parse_slot(obj, "export_preset") {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let catalog = match catalog_required("export_preset", catalog) {
+        Ok(c) => c,
+        Err(e) => return e,
+    };
+    let name = slot_name(session, setlist, index);
+    let preset = match session.read_preset_at(setlist, index) {
+        Ok(Some(preset)) => preset,
+        Ok(None) => match session.read_preset() {
+            Ok(template) => {
+                let Some(mut empty) = Preset::parse(&template.encode()) else {
+                    return err("export_preset", "the loaded document does not re-parse");
+                };
+                empty_the_chain(&mut empty);
+                empty
+            }
+            Err(e) => return usb_err("export_preset", e),
+        },
+        Err(e) => return usb_err("export_preset", e),
+    };
+    let mut written = to_hlx(&preset, catalog, &name);
+    rewrite_floor_io(&mut written.document);
+    if json_bytes(&written.document) > HLX_MAX_BYTES {
+        return err("export_preset", "hlx is too large");
+    }
+    let mut body = json!({
+        "ok": true,
+        "op": "export_preset",
+        "setlist": setlist,
+        "index": index,
+        "name": name,
+        "filename": hlx_filename(&name),
+        "hlx": written.document,
+    });
+    if !written.skipped.is_empty() {
+        body["skipped"] = json!(written.skipped);
+    }
+    body
+}
+
+fn import_preset(
+    session: &mut Session,
+    catalog: Option<&Catalog>,
+    obj: &Map<String, Value>,
+    follow: &mut FollowState,
+) -> Value {
+    let (setlist, index) = match parse_slot(obj, "import_preset") {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let catalog = match catalog_required("import_preset", catalog) {
+        Ok(c) => c,
+        Err(e) => return e,
+    };
+    let Some(hlx) = obj.get("hlx") else {
+        return err("import_preset", "hlx must be a JSON object");
+    };
+    if !hlx.is_object() || hlx.pointer("/data/tone").is_none() {
+        return err("import_preset", "hlx must have data.tone");
+    }
+    if json_bytes(hlx) > HLX_MAX_BYTES {
+        return err("import_preset", "hlx is too large");
+    }
+    let name = hlx_name(hlx);
+    let dest = match session.read_preset_at(setlist, index) {
+        Ok(preset) => preset,
+        Err(e) => return usb_err("import_preset", e),
+    };
+    let original_name = slot_name(session, setlist, index);
+    let backup = dest.as_ref().map(Preset::encode);
+    let loaded_before = remember_info(session, follow);
+    let dest_was_loaded = loaded_before
+        .as_ref()
+        .is_some_and(|(s, i, _)| *s == setlist && *i == index);
+
+    let mut template = match import_template(session, dest.as_ref()) {
+        Ok(preset) => preset,
+        Err(e) => return e,
+    };
+    empty_the_chain(&mut template);
+    let built = slots_from_hlx(&mut template, hlx, catalog);
+    if built.blocks == 0 && !needed_usb_slots(hlx).is_empty() {
+        let mut body = err("import_preset", "nothing from the file could be placed");
+        if !built.skipped.is_empty() {
+            body["skipped"] = json!(built.skipped);
+        }
+        return body;
+    }
+
+    eprintln!("import_preset: write_preset_at {name} setlist {setlist} index {index}");
+    if let Err(e) = session.write_preset_at(setlist, index, &name, &template) {
+        if !e.loses_session() {
+            recover_import(session, setlist, index, &original_name, backup.as_deref());
+        }
+        return usb_err("import_preset", e);
+    }
+    follow.dirty = true;
+    if dest_was_loaded {
+        follow.remember(setlist, index, Some(name.clone()));
+    }
+    drain_session(session, follow);
+
+    let after = match session.read_preset_at(setlist, index) {
+        Ok(preset) => preset,
+        Err(e) => {
+            if !e.loses_session() {
+                recover_import(session, setlist, index, &original_name, backup.as_deref());
+            }
+            return usb_err("import_preset", e);
+        }
+    };
+    let kept = after.as_ref().map(user_blocks).unwrap_or(0);
+    if built.blocks > 0 && kept == 0 {
+        recover_import(session, setlist, index, &original_name, backup.as_deref());
+        return err(
+            "import_preset",
+            "the device did not keep the imported chain; original restored",
+        );
+    }
+
+    // Opcode 8 writes flash. Reloading the playing slot is what makes the
+    // Floor screen and get_state match; HX Edit's import onto the current
+    // preset is followed by a document read, and leaving then returning is
+    // the same redraw.
+    if dest_was_loaded {
+        if let Err(e) = session.select_preset(setlist, index) {
+            eprintln!("import_preset: reload after write failed: {e}");
+        } else {
+            drain_session(session, follow);
+        }
+    }
+
+    let mut body = json!({
+        "ok": true,
+        "op": "import_preset",
+        "setlist": setlist,
+        "index": index,
+        "name": name,
+        "blocks": built.blocks,
+    });
+    if !built.skipped.is_empty() {
+        body["skipped"] = json!(built.skipped);
+    }
+    body
 }
 
 fn move_block(
@@ -595,8 +935,8 @@ fn set_int(session: &mut Session, obj: &serde_json::Map<String, Value>) -> Value
         Ok(v) => v,
         Err(e) => return e,
     };
-    let Some(value) = parse_i64(obj.get("value"), 0, 127) else {
-        return err("set_int", "value must be an integer 0-127");
+    let Some(value) = parse_i64(obj.get("value"), 0, 128) else {
+        return err("set_int", "value must be an integer 0-128");
     };
     match write_param(session, block, param, subslot, HxValue::Int(value), true) {
         Ok(()) => json!({
@@ -871,6 +1211,132 @@ mod tests {
         assert_eq!(rpc::key::SETLIST, 107);
         assert_eq!(rpc::key::PRESET_INDEX, 108);
         assert_eq!(rpc::key::NAME, 109);
+    }
+
+    #[test]
+    fn slot_transfer_opcodes() {
+        assert_eq!(rpc::op::FETCH_PRESET, 4);
+        assert_eq!(rpc::op::WRITE_SLOT_NAMED, 8);
+        assert_eq!(rpc::key::DOCUMENT, 110);
+    }
+
+    #[test]
+    fn needed_usb_slots_reads_dsp0_and_dsp1() {
+        let hlx = serde_json::json!({
+            "data": {
+                "tone": {
+                    "dsp0": {
+                        "block0": { "@slot": 1, "@model": "HD2_DistKinkyBoost" },
+                        "inputA": { "@model": "HD2_AppDSPFlow1Input" }
+                    },
+                    "dsp1": {
+                        "block0": { "@slot": 23, "@model": "HD2_MM4Dimension" },
+                        "block1": { "@slot": 24, "@model": "HD2_DelayTransistorTape" }
+                    }
+                }
+            }
+        });
+        assert_eq!(super::needed_usb_slots(&hlx), vec![1, 23, 24]);
+    }
+
+    #[test]
+    fn needed_usb_slots_hx_edit_without_at_slot() {
+        let hlx = serde_json::json!({
+            "data": {
+                "tone": {
+                    "dsp0": {
+                        "block0": { "@path": 0, "@position": 0, "@model": "HD2_DistKinkyBoost" }
+                    },
+                    "dsp1": {
+                        "block0": { "@path": 0, "@position": 2, "@model": "HD2_MM4Dimension" }
+                    },
+                    "snapshot0": {
+                        "blocks": { "dsp0": { "block0": true } }
+                    }
+                }
+            }
+        });
+        assert_eq!(super::needed_usb_slots(&hlx), vec![1, 21]);
+    }
+
+    #[test]
+    fn hlx_filename_sanitises_and_falls_back() {
+        assert_eq!(super::hlx_filename("Essex A30"), "Essex A30.hlx");
+        assert_eq!(super::hlx_filename("../evil"), "evil.hlx");
+        assert_eq!(super::hlx_filename("***"), "preset.hlx");
+        assert_eq!(super::hlx_filename(""), "preset.hlx");
+    }
+
+    #[test]
+    fn rewrite_floor_io_replaces_stomp_endpoints() {
+        let mut document = serde_json::json!({
+            "data": {
+                "meta": { "name": "Probe" },
+                "tone": {
+                    "dsp0": {
+                        "inputA": { "@model": "HelixStomp_AppDSPFlowInput" },
+                        "outputA": { "@model": "HelixStomp_AppDSPFlowOutputMain" },
+                        "outputB": { "@model": "HelixStomp_AppDSPFlowOutputSend" },
+                        "block0": { "@model": "HD2_DistKinkyBoost" }
+                    },
+                    "dsp1": {
+                        "inputA": { "@model": "HelixStomp_AppDSPFlowInput" },
+                        "outputA": { "@model": "HelixStomp_AppDSPFlowOutputMain" }
+                    }
+                }
+            }
+        });
+        super::rewrite_floor_io(&mut document);
+        assert_eq!(
+            document
+                .pointer("/data/tone/dsp0/inputA/@model")
+                .and_then(serde_json::Value::as_str),
+            Some("HD2_AppDSPFlow1Input")
+        );
+        assert_eq!(
+            document
+                .pointer("/data/tone/dsp0/outputA/@model")
+                .and_then(serde_json::Value::as_str),
+            Some("HD2_AppDSPFlowOutput")
+        );
+        assert_eq!(
+            document
+                .pointer("/data/tone/dsp0/outputB/@model")
+                .and_then(serde_json::Value::as_str),
+            Some("HD2_AppDSPFlowOutput")
+        );
+        assert_eq!(
+            document
+                .pointer("/data/tone/dsp1/inputA/@model")
+                .and_then(serde_json::Value::as_str),
+            Some("HD2_AppDSPFlow2Input")
+        );
+        assert_eq!(
+            document
+                .pointer("/data/tone/dsp1/outputA/@model")
+                .and_then(serde_json::Value::as_str),
+            Some("HD2_AppDSPFlow2Output")
+        );
+        assert_eq!(
+            document
+                .pointer("/data/tone/dsp0/block0/@model")
+                .and_then(serde_json::Value::as_str),
+            Some("HD2_DistKinkyBoost")
+        );
+    }
+
+    #[test]
+    fn rewrite_floor_io_leaves_floor_ids() {
+        let mut document = serde_json::json!({
+            "data": { "tone": { "dsp0": { "inputA": { "@model": "HD2_AppDSPFlow1Input" } } } }
+        });
+        super::rewrite_floor_io(&mut document);
+        assert_eq!(
+            document
+                .pointer("/data/tone/dsp0/inputA/@model")
+                .and_then(serde_json::Value::as_str),
+            Some("HD2_AppDSPFlow1Input")
+        );
     }
 
     #[test]

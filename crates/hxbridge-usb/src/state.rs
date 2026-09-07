@@ -50,6 +50,9 @@ fn is_ir_select(knob: &Value) -> bool {
 }
 
 /// Menu labels for IR Select: 1-based slot, plus the device name when the slot is occupied.
+///
+/// Opcode 13 reports 0-based slots. The IR Select parameter on the wire is
+/// 1-based (`fixed.models` min=1, max=128, default=1). `labels[0]` is IR 1.
 pub fn ir_menu(irs: &[(i64, String)], slots: usize) -> Vec<String> {
     let n = slots.max(1);
     let mut labels: Vec<String> = (0..n).map(|i| format!("{}", i + 1)).collect();
@@ -83,9 +86,11 @@ pub fn overlay_ir_choices(knobs: &mut [Value], irs: &[(i64, String)], values: &[
         let labels = ir_menu(irs, n);
         if let Some(idx) = knob.get("index").and_then(Value::as_u64) {
             if let Some(v) = values.get(idx as usize) {
-                let i = v.round().max(0.0) as usize;
-                if let Some(label) = labels.get(i) {
-                    knob["label"] = json!(label);
+                let wire = v.round() as i64;
+                if wire >= 1 {
+                    if let Some(label) = labels.get((wire as usize) - 1) {
+                        knob["label"] = json!(label);
+                    }
                 }
             }
         }
@@ -570,7 +575,7 @@ mod tests {
                 (2, "   ".into()),
                 (3, "Heir Apparent".into()),
             ],
-            &[0.0],
+            &[1.0],
         );
         let choices = knobs[0]["choices"].as_array().expect("choices");
         assert_eq!(choices[0], "1  Essex Cab");
@@ -610,7 +615,7 @@ mod tests {
         let choices = dashes["choices"].as_array().expect("ir_select choices");
         assert_eq!(choices.len(), IR_SLOTS);
         assert!(choices.iter().all(|c| c == "-"));
-        overlay_ir_choices(&mut knobs, &[(2, "Heir Apparent".into())], &[2.0]);
+        overlay_ir_choices(&mut knobs, &[(2, "Heir Apparent".into())], &[3.0]);
         let sel = knobs
             .iter()
             .find(|k| k["id"] == "Index")

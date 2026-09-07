@@ -65,7 +65,9 @@ export function timeoutFor(op: string): number {
     op === "list_irs" ||
     op === "list_models" ||
     op === "set_model" ||
-    op === "clear_block"
+    op === "clear_block" ||
+    op === "export_preset" ||
+    op === "import_preset"
   ) {
     return 45_000;
   }

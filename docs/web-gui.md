@@ -52,7 +52,7 @@ On the first visit, tap **Wi-Fi**. After a successful connect the GUI stores `to
 
 On iPhone, use Share → Add to Home Screen. The icon is `apple-touch-icon.png`. The page title is ToneRelay.
 
-The preset list is a drawer behind the header menu button on every viewport, including a laptop browser. It starts closed. The menu button opens and hides it. The chain grid stretches to the editor width. Effect tiles grow between about 6.25 rem and 9.25 rem; below that floor the board scrolls sideways. On a phone the chain still scrolls.
+The preset list is a drawer behind the header menu button on every viewport, including a laptop browser. It starts closed. The menu button opens and hides it. Save writes the loaded edit buffer to the loaded slot. Import picks an `.hlx` file (iOS Files, including OneDrive if that app is a Files location) then asks you to tap a slot and confirm the overwrite. The write is the whole preset: chain, snapshots, controller assignments, and Command Centre. Each row has an export control that downloads the stored slot as `.hlx` without loading it. On iPhone, export uses the share sheet when the browser allows file sharing. The chain grid stretches to the editor width. Effect tiles grow between about 6.25 rem and 9.25 rem; below that floor the board scrolls sideways. On a phone the chain still scrolls.
 
 ## Editor
 
@@ -60,11 +60,11 @@ The editor shows each DSP as Input, eight Path A cells, and Output. Input and Ou
 
 A snapshot strip sits under the chain in portrait. In phone landscape the strip moves to a header menu on the right so the inspector keeps the remaining height. The current snapshot is marked from `get_state`. The GUI polls `events` about once a second and refreshes when the Floor changes.
 
-Input and Output Assign menus use catalog labels when the daemon has HX Edit resources. Discrete parameters (Ratio, Clipping, Gain Mod, Voltage) use labels from `HelixControls.json`. IR Select uses names from the device IR list (opcode 13) in place of the catalog dashes; empty slots show the 1-based slot number. Six or fewer choices show as a segmented row on the same grid as sliders; longer lists stay a pill menu. Without a catalog the control stays numeric.
+Input and Output Assign menus use catalog labels when the daemon has HX Edit resources. Discrete parameters (Ratio, Clipping, Gain Mod, Voltage) use labels from `HelixControls.json`. IR Select uses names from the device IR list (opcode 13) in place of the catalog dashes; empty slots show the 1-based slot number. The parameter on the wire is 1-128 (HX Edit min/max); opcode 13 slots are 0-based, so IR 1 is list index 0. Six or fewer choices show as a segmented row on the same grid as sliders; longer lists stay a pill menu. Without a catalog the control stays numeric.
 
 ## Commands
 
-The command set is the GATT set plus `get_state`, `preset_info`, `events`, `select_snapshot`, `move_block`, `set_model`, `clear_block`, `list_models`, `list_irs`, and `save_preset`.
+The command set is the GATT set plus `get_state`, `preset_info`, `events`, `select_snapshot`, `move_block`, `set_model`, `clear_block`, `list_models`, `list_irs`, `save_preset`, `export_preset`, and `import_preset`.
 
 `get_state` reads the loaded preset. The reply has `blocks`, `paths`, `snapshots`, `snapshot` (0-based current snapshot from the preset document), and the active `{setlist, index, name}`. `paths` is the TonePush layout and includes `split_at` / `join_at` (the Path A slot each junction sits just before). The GUI draws eight Path A cells and eight Path B cells; split and merge are wire points at those attach slots. When the catalog is loaded, I/O blocks also have `assign_label` and `assign_menu`, and each knob may include `choices` (the HX Edit menu for that parameter). IR Select `choices` are device IR names, not the catalog dashes. Occupied blocks also have `load` (catalog DSP percent for that width).
 
@@ -84,7 +84,7 @@ python3 ~/hxblue/.agents/skills/webapp-testing/scripts/with_server.py \
   -- .venv/bin/python ~/hxblue/hxbridge/test_gui.py
 ```
 
-Live Helix checks stay read-only (`preset_info`, `get_state`) unless `HXBRIDGE_LIVE_MOVE=1`. Opcode 43 moves a block. Opcode 40 changes a block's model. Opcode 28 clears a slot. Opcode 71 saves the loaded slot to flash.
+Live Helix checks stay read-only (`preset_info`, `get_state`) unless `HXBRIDGE_LIVE_MOVE=1`. Opcode 43 moves a block. Opcode 40 changes a block's model. Opcode 28 clears a slot. Opcode 71 saves the loaded slot to flash. Opcode 8 writes a rebuilt `.hlx` into a setlist slot (`import_preset`).
 
 ## Transports
 

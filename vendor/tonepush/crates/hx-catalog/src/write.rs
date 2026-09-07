@@ -77,6 +77,7 @@ pub fn to_hlx(preset: &Preset, catalog: &Catalog, name: &str) -> Written {
     let mut next_cab: Vec<i64> = vec![0];
     let mut path = 0usize;
     let mut opened = false;
+    let mut refs: Vec<ChainRef> = Vec::new();
 
     for (index, slot) in preset.slots.iter().enumerate() {
         match slot.kind {
@@ -99,6 +100,8 @@ pub fn to_hlx(preset: &Preset, catalog: &Catalog, name: &str) -> Written {
                     slot.enabled,
                     catalog,
                     &mut skipped,
+                    &mut refs,
+                    path,
                 );
                 // The cab rides in the amp's slot on the wire; write it out as
                 // its own block, sharing the amp's bypass state.
@@ -220,48 +223,57 @@ pub fn to_hlx(preset: &Preset, catalog: &Catalog, name: &str) -> Written {
 
     // Snapshots: the same blocks with a different set of them switched on. A
     // preset saved without these is a preset that has lost two thirds of what
-    // the player set up.
+    // the player set up. Block keys match the chain (`dsp0`/`dsp1`, `blockN`)
+    // so import can put each bypass back on the USB slot it came from.
     for (index, snapshot) in preset.snapshot_details().iter().enumerate() {
         let mut blocks = Map::new();
-        let mut dsp0 = Map::new();
-        // Snapshot state is indexed by slot; the document names blocks in the
-        // order they were emitted, so walk the same slots the same way.
-        let mut block_number = 0i64;
-        for (position, slot) in preset.slots.iter().enumerate() {
-            if !matches!(slot.kind, SlotKind::Block | SlotKind::Looper) || slot.model.is_none() {
-                continue;
+        for r in &refs {
+            if let Some(Some(on)) = snapshot.enabled.get(r.slot) {
+                let dsp = blocks
+                    .entry(format!("dsp{}", r.dsp))
+                    .or_insert_with(|| Value::Object(Map::new()));
+                if let Value::Object(dsp) = dsp {
+                    dsp.insert(format!("block{}", r.block), Value::Bool(*on));
+                }
             }
-            if let Some(Some(on)) = snapshot.enabled.get(position) {
-                dsp0.insert(format!("block{block_number}"), Value::Bool(*on));
-            }
-            block_number += 1;
         }
-        // A split is switched by a snapshot like any block, and HX Edit records
-        // it under its node name rather than a block number.
-        for dsp_path in &layout.paths {
+        for (dsp_index, dsp_path) in layout.paths.iter().enumerate() {
             if let Some(split) = dsp_path.split {
                 if preset.junction_switchable(split) {
                     if let Some(Some(on)) = snapshot.enabled.get(split) {
-                        dsp0.insert("split".into(), Value::Bool(*on));
+                        let dsp = blocks
+                            .entry(format!("dsp{dsp_index}"))
+                            .or_insert_with(|| Value::Object(Map::new()));
+                        if let Value::Object(dsp) = dsp {
+                            dsp.insert("split".into(), Value::Bool(*on));
+                        }
                     }
                 }
             }
         }
-        blocks.insert("dsp0".into(), Value::Object(dsp0));
 
-        tone.insert(
-            format!("snapshot{index}"),
-            json!({
-                "@name": snapshot.name,
-                "@valid": snapshot.valid,
-                "@custom_name": snapshot.named,
-                "@tempo": snapshot.tempo.unwrap_or(120.0),
-                "@ledcolor": 0,
-                "@pedalstate": 0,
-                "blocks": Value::Object(blocks),
-            }),
-        );
+        let mut snap = json!({
+            "@name": snapshot.name,
+            "@valid": snapshot.valid,
+            "@custom_name": snapshot.named,
+            "@tempo": snapshot.tempo.unwrap_or(120.0),
+            "blocks": Value::Object(blocks),
+        });
+        if let Some(obj) = snap.as_object_mut() {
+            if let Some(led) = snapshot.ledcolor {
+                obj.insert("@ledcolor".into(), json!(led));
+            }
+            if let Some(pedal) = snapshot.pedalstate {
+                obj.insert("@pedalstate".into(), json!(pedal));
+            }
+            if let Some(controllers) = snapshot_controllers(preset, index, &refs, catalog) {
+                obj.insert("controllers".into(), controllers);
+            }
+        }
+        tone.insert(format!("snapshot{index}"), snap);
     }
+
+    emit_assignments(preset, &refs, catalog, &mut tone);
 
     // The preset's own tempo, which lives beside the snapshots in HX Edit's
     // document rather than inside any of them.
@@ -317,6 +329,8 @@ fn emit(
     enabled: bool,
     catalog: &Catalog,
     skipped: &mut Vec<String>,
+    refs: &mut Vec<ChainRef>,
+    dsp_index: usize,
 ) {
     let Some(number) = model else { return };
 
@@ -381,6 +395,12 @@ fn emit(
     }
 
     dsp.insert(format!("block{next_block}"), Value::Object(block));
+    refs.push(ChainRef {
+        dsp: dsp_index,
+        block: *next_block,
+        slot,
+        model: number,
+    });
     *next_block += 1;
 }
 
@@ -403,6 +423,7 @@ fn emit_named(
     // carries the amp's index - which is what says whose cab it is. Positional
     // pairing guessed wrong whenever a preset held a standalone amp as well as
     // a paired one.
+    let mut unused = Vec::new();
     emit(
         &mut one,
         &mut scratch,
@@ -412,10 +433,250 @@ fn emit_named(
         enabled,
         catalog,
         skipped,
+        &mut unused,
+        0,
     );
     if let Some((_, body)) = one.into_iter().next() {
         dsp.insert(node, body);
     }
+}
+
+struct ChainRef {
+    dsp: usize,
+    block: i64,
+    slot: usize,
+    model: u32,
+}
+
+fn emit_assignments(
+    preset: &Preset,
+    refs: &[ChainRef],
+    catalog: &Catalog,
+    tone: &mut Map<String, Value>,
+) {
+    let mut controller = Map::new();
+    let mut footswitch = Map::new();
+
+    if let Some(hx_proto::msgpack::Value::Array(by_source)) = preset.tone.get(4) {
+        for (ordinal, entries) in by_source.iter().enumerate() {
+            let hx_proto::msgpack::Value::Array(entries) = entries else {
+                continue;
+            };
+            if ordinal == 0 {
+                continue;
+            }
+            for entry in entries {
+                let Some(what) = entry.get(1) else {
+                    continue;
+                };
+                if what.get(9).is_some() {
+                    continue;
+                }
+                let Some(block) = what.get(5).and_then(hx_proto::msgpack::Value::as_i64) else {
+                    continue;
+                };
+                let Some(r) = refs.iter().find(|r| r.slot == block as usize) else {
+                    continue;
+                };
+                let Some(param) = what
+                    .get(6)
+                    .and_then(|t| t.get(29))
+                    .and_then(hx_proto::msgpack::Value::as_i64)
+                else {
+                    continue;
+                };
+                let id = catalog
+                    .param(r.model, param as usize)
+                    .map(|p| p.id.clone())
+                    .unwrap_or_else(|| format!("{param}"));
+                let min = what
+                    .get(2)
+                    .and_then(hx_proto::msgpack::Value::as_f32)
+                    .unwrap_or(0.0);
+                let max = what
+                    .get(3)
+                    .and_then(hx_proto::msgpack::Value::as_f32)
+                    .unwrap_or(1.0);
+                let snap_off = matches!(what.get(13), Some(hx_proto::msgpack::Value::Bool(true)));
+                let body = json!({
+                    "@controller": ordinal,
+                    "@min": min,
+                    "@max": max,
+                    "@snapshot_disable": snap_off,
+                });
+                nest3(
+                    &mut controller,
+                    &format!("dsp{}", r.dsp),
+                    &format!("block{}", r.block),
+                )
+                .insert(id, body);
+            }
+        }
+    }
+
+    if let Some(hx_proto::msgpack::Value::Array(cells)) =
+        preset.tone.get(3).and_then(|cc| cc.get(8))
+    {
+        for (cell, items) in cells.iter().enumerate() {
+            let hx_proto::msgpack::Value::Array(items) = items else {
+                continue;
+            };
+            for item in items {
+                let Some(body) = item.get(11) else {
+                    continue;
+                };
+                let Some(block) = body.get(8).and_then(hx_proto::msgpack::Value::as_i64) else {
+                    continue;
+                };
+                let Some(r) = refs.iter().find(|r| r.slot == block as usize) else {
+                    continue;
+                };
+                let kind = body.get(0).and_then(hx_proto::msgpack::Value::as_i64);
+                let mut fs = json!({
+                    "@fs_index": cell + 1,
+                    "@fs_enabled": matches!(item.get(13), Some(hx_proto::msgpack::Value::Bool(true))),
+                    "@fs_momentary": matches!(item.get(12), Some(hx_proto::msgpack::Value::Bool(true))),
+                    "@fs_primary": matches!(item.get(15), Some(hx_proto::msgpack::Value::Bool(true))),
+                });
+                if let Some(label) = item.get(14).and_then(hx_proto::msgpack::Value::as_str) {
+                    fs["@fs_label"] = json!(label);
+                    if matches!(item.get(15), Some(hx_proto::msgpack::Value::Bool(true))) {
+                        fs["@fs_customlabel"] = json!(label);
+                    }
+                }
+                if let Some(colour) = body.get(6).and_then(hx_proto::msgpack::Value::as_i64) {
+                    fs["@fs_ledcolor"] = json!(colour);
+                }
+                if let Some(led) = item.get(16).and_then(hx_proto::msgpack::Value::as_i64) {
+                    fs["@fs_ledindex"] = json!(led);
+                }
+                if kind == Some(2) {
+                    if let Some(param) = body
+                        .get(9)
+                        .and_then(|t| t.get(29))
+                        .and_then(hx_proto::msgpack::Value::as_i64)
+                    {
+                        let id = catalog
+                            .param(r.model, param as usize)
+                            .map(|p| p.id.clone())
+                            .unwrap_or_else(|| format!("{param}"));
+                        let slot = nest3(
+                            &mut controller,
+                            &format!("dsp{}", r.dsp),
+                            &format!("block{}", r.block),
+                        )
+                        .entry(id)
+                        .or_insert_with(|| json!({}));
+                        if let Some(obj) = slot.as_object_mut() {
+                            for (k, v) in fs.as_object().cloned().unwrap_or_default() {
+                                obj.insert(k, v);
+                            }
+                        }
+                    }
+                } else {
+                    let dsp = footswitch
+                        .entry(format!("dsp{}", r.dsp))
+                        .or_insert_with(|| Value::Object(Map::new()));
+                    if let Value::Object(dsp) = dsp {
+                        dsp.insert(format!("block{}", r.block), fs);
+                    }
+                }
+            }
+        }
+    }
+
+    if !controller.is_empty() {
+        tone.insert("controller".into(), Value::Object(controller));
+    }
+    if !footswitch.is_empty() {
+        tone.insert("footswitch".into(), Value::Object(footswitch));
+    }
+}
+
+fn snapshot_controllers(
+    preset: &Preset,
+    index: usize,
+    refs: &[ChainRef],
+    catalog: &Catalog,
+) -> Option<Value> {
+    let snap = preset.tone.get(10)?.get(10)?;
+    let hx_proto::msgpack::Value::Array(entries) = snap else {
+        return None;
+    };
+    let rows = match entries.get(index)?.get(2) {
+        Some(hx_proto::msgpack::Value::Array(rows)) => rows,
+        _ => return None,
+    };
+    let hx_proto::msgpack::Value::Array(by_source) = preset.tone.get(4)? else {
+        return None;
+    };
+    let mut out = Map::new();
+    for entries in by_source {
+        let hx_proto::msgpack::Value::Array(entries) = entries else {
+            continue;
+        };
+        for entry in entries {
+            let Some(table) = entry.get(0).and_then(hx_proto::msgpack::Value::as_i64) else {
+                continue;
+            };
+            let Some(what) = entry.get(1) else {
+                continue;
+            };
+            if what.get(9).is_some() {
+                continue;
+            }
+            let Some(block) = what.get(5).and_then(hx_proto::msgpack::Value::as_i64) else {
+                continue;
+            };
+            let Some(r) = refs.iter().find(|r| r.slot == block as usize) else {
+                continue;
+            };
+            let Some(param) = what
+                .get(6)
+                .and_then(|t| t.get(29))
+                .and_then(hx_proto::msgpack::Value::as_i64)
+            else {
+                continue;
+            };
+            let Some(row) = rows.get(table as usize) else {
+                continue;
+            };
+            let hx_proto::msgpack::Value::Array(row) = row else {
+                continue;
+            };
+            if row.get(1).and_then(hx_proto::msgpack::Value::as_i64) == Some(64) {
+                continue;
+            }
+            let disable = matches!(row.first(), Some(hx_proto::msgpack::Value::Bool(true)));
+            let value = row.get(2).and_then(hx_proto::msgpack::Value::as_f32)?;
+            let id = catalog
+                .param(r.model, param as usize)
+                .map(|p| p.id.clone())
+                .unwrap_or_else(|| format!("{param}"));
+            nest3(
+                &mut out,
+                &format!("dsp{}", r.dsp),
+                &format!("block{}", r.block),
+            )
+            .insert(id, json!({ "@fs_enabled": disable, "@value": value }));
+        }
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(Value::Object(out))
+    }
+}
+
+fn nest3<'a>(root: &'a mut Map<String, Value>, a: &str, b: &str) -> &'a mut Map<String, Value> {
+    let dsp = root
+        .entry(a.to_string())
+        .or_insert_with(|| Value::Object(Map::new()));
+    let dsp = dsp.as_object_mut().expect("dsp object");
+    let block = dsp
+        .entry(b.to_string())
+        .or_insert_with(|| Value::Object(Map::new()));
+    block.as_object_mut().expect("block object")
 }
 
 #[cfg(test)]

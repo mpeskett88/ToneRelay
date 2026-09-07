@@ -76,6 +76,8 @@ class CommandTests(unittest.TestCase):
         self.assertIn("set_model", r["ops"])
         self.assertIn("clear_block", r["ops"])
         self.assertIn("save_preset", r["ops"])
+        self.assertIn("export_preset", r["ops"])
+        self.assertIn("import_preset", r["ops"])
 
     def test_get_param_rejects_bad_block(self):
         r = handle_command(b'{"op":"get_param","block":99,"param":0}')
@@ -244,6 +246,71 @@ class NewOpsTests(unittest.TestCase):
         r = handle_command(b'{"op":"clear_block","block":9}')
         self.assertFalse(r["ok"])
         self.assertIn("output", r["error"])
+
+    def test_export_preset_rejects_range(self):
+        r = handle_command(b'{"op":"export_preset","setlist":9,"index":0}')
+        self.assertFalse(r["ok"])
+        self.assertIn("setlist", r["error"])
+        r = handle_command(b'{"op":"export_preset","setlist":0,"index":128}')
+        self.assertFalse(r["ok"])
+        self.assertIn("index", r["error"])
+
+    def test_export_preset_ok(self):
+        from unittest.mock import patch
+
+        with patch(
+            "protocol.run_usb",
+            return_value={
+                "ok": True,
+                "op": "export_preset",
+                "filename": "Essex A30.hlx",
+                "hlx": {"data": {"meta": {"name": "Essex A30"}, "tone": {}}},
+            },
+        ) as run_usb:
+            r = handle_command(b'{"op":"export_preset","setlist":2,"index":17}')
+            self.assertTrue(r["ok"])
+            self.assertEqual(run_usb.call_args[0][0]["setlist"], 2)
+            self.assertEqual(run_usb.call_args[0][0]["index"], 17)
+            self.assertEqual(r["filename"], "Essex A30.hlx")
+
+    def test_import_preset_rejects_missing_hlx(self):
+        r = handle_command(b'{"op":"import_preset","setlist":0,"index":1}')
+        self.assertFalse(r["ok"])
+        self.assertIn("hlx", r["error"])
+
+    def test_import_preset_rejects_string_hlx(self):
+        r = handle_command(b'{"op":"import_preset","setlist":0,"index":1,"hlx":"nope"}')
+        self.assertFalse(r["ok"])
+        self.assertIn("object", r["error"])
+
+    def test_import_preset_rejects_oversized(self):
+        from unittest.mock import patch
+
+        with patch("protocol.HLX_MAX_BYTES", 10):
+            r = handle_command(
+                b'{"op":"import_preset","setlist":0,"index":1,"hlx":{"data":{"tone":{}}}}'
+            )
+            self.assertFalse(r["ok"])
+            self.assertIn("too large", r["error"])
+
+    def test_import_preset_ok(self):
+        from unittest.mock import patch
+
+        body = {
+            "op": "import_preset",
+            "setlist": 0,
+            "index": 3,
+            "hlx": {"data": {"meta": {"name": "Probe"}, "tone": {"dsp0": {}}}},
+        }
+        with patch(
+            "protocol.run_usb",
+            return_value={"ok": True, "op": "import_preset", "setlist": 0, "index": 3, "name": "Probe"},
+        ) as run_usb:
+            r = handle_command(json.dumps(body).encode())
+            self.assertTrue(r["ok"])
+            sent = run_usb.call_args[0][0]
+            self.assertEqual(sent["index"], 3)
+            self.assertEqual(sent["hlx"]["data"]["meta"]["name"], "Probe")
 
 
 if __name__ == "__main__":

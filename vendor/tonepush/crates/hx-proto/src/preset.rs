@@ -366,6 +366,10 @@ mod key {
     pub const SNAPSHOT_TEMPO: i64 = 5;
     /// Whether the name was typed rather than left as "SNAPSHOT 1".
     pub const SNAPSHOT_NAMED: i64 = 14;
+    /// Expression-pedal position captured with the snapshot.
+    pub const SNAPSHOT_PEDAL: i64 = 11;
+    /// Snapshot LED colour as HX Edit stores it.
+    pub const SNAPSHOT_LED: i64 = 12;
 }
 
 /// One snapshot: a remembered set of bypass states, with its own name and tempo.
@@ -376,6 +380,11 @@ pub struct Snapshot {
     pub valid: bool,
     /// Whether the name was given rather than left at the default.
     pub named: bool,
+    /// Expression-pedal position captured with the snapshot, when the document
+    /// carries one.
+    pub pedalstate: Option<i64>,
+    /// Snapshot LED colour, when the document carries one.
+    pub ledcolor: Option<i64>,
     /// Whether each slot was on, indexed the same as [`Preset::slots`].
     pub enabled: Vec<Option<bool>>,
 }
@@ -782,6 +791,8 @@ impl Preset {
                 }),
                 valid: matches!(e.get(key::SNAPSHOT_VALID), Some(Value::Bool(true))),
                 named: matches!(e.get(key::SNAPSHOT_NAMED), Some(Value::Bool(true))),
+                pedalstate: e.get(key::SNAPSHOT_PEDAL).and_then(Value::as_i64),
+                ledcolor: e.get(key::SNAPSHOT_LED).and_then(Value::as_i64),
                 enabled: match e.get(key::SNAPSHOT_SLOTS) {
                     Some(Value::Array(slots)) => slots
                         .iter()
@@ -1091,15 +1102,22 @@ impl Preset {
     /// Returns false if the position does not exist. The slot keeps whatever
     /// kind it was given, so pasting a block over an input is refused: the
     /// endpoints are fixtures of the topology, not slots you can fill.
+    ///
+    /// Floor Path 2 is a second slot array (USB 20–39). Index into that path,
+    /// not Path 1's array, or a paste at 23 looks like "the slot would not
+    /// take it" even when the template has an empty effect slot there.
     pub fn paste_slot(&mut self, position: usize, slot: &Value) -> bool {
         let kind = self.slots.get(position).map(|s| s.kind);
         if !matches!(kind, Some(Kind::Block) | Some(Kind::Empty)) {
             return false;
         }
-        let Some(Value::Array(items)) = self.tone.at_mut(&[key::PATH, key::SLOTS]) else {
+        let Some((path_key, local)) = path_slot_loc(&self.tone, position) else {
             return false;
         };
-        let Some(existing) = items.get_mut(position) else {
+        let Some(Value::Array(items)) = self.tone.at_mut(&[path_key, key::SLOTS]) else {
+            return false;
+        };
+        let Some(existing) = items.get_mut(local) else {
             return false;
         };
         *existing = slot.clone();
@@ -1682,6 +1700,48 @@ mod tests {
         let layout = preset.layout();
         assert_eq!(layout.paths.len(), 2);
         assert_eq!(layout.paths[1].head, vec![4]);
+    }
+
+    #[test]
+    fn paste_slot_writes_the_second_dsp_path() {
+        let empty = crate::msgmap! { key::KIND => Value::Int(8), key::BODY => Value::Nil };
+        let input = crate::msgmap! { key::KIND => Value::Int(0), key::BODY => Value::Nil };
+        let output = crate::msgmap! { key::KIND => Value::Int(1), key::BODY => Value::Nil };
+        let block = crate::msgmap! {
+            key::KIND => Value::Int(6),
+            key::BODY => crate::msgmap! {
+                key::MODEL_REF => crate::msgmap! {
+                    key::MODEL => Value::Int(101),
+                    key::PAIRED_MODEL => Value::Int(-1),
+                },
+                key::ENABLED => Value::Bool(true),
+                key::VALUES => crate::msgmap! {
+                    2 => Value::Int(0),
+                    key::ARRAY_VALUES => Value::Array(vec![]),
+                },
+            },
+        };
+        let path = |slots: Vec<Value>| crate::msgmap! { key::SLOTS => Value::Array(slots) };
+        let tone = crate::msgmap! {
+            0 => path(vec![input.clone(), empty.clone(), output.clone()]),
+            1 => path(vec![input, block, output]),
+        };
+        let mut blob = Encoder::encode(&Value::Str(Preset::MAGIC.into()));
+        blob.extend(Encoder::encode(&Value::Bin(vec![0x3d, 0, 0, 0], 0)));
+        blob.extend(Encoder::encode(&tone));
+        let mut preset = Preset::parse(&blob).expect("parses");
+        let copied = preset.copy_slot(4).expect("path 2 block");
+        assert!(preset.paste_slot(4, &empty), "clear path 2");
+        assert_eq!(preset.slots[4].kind, Kind::Empty);
+        assert_eq!(
+            preset.slots[1].kind,
+            Kind::Empty,
+            "path 1 empty is untouched"
+        );
+        assert!(preset.paste_slot(4, &copied), "paste back onto path 2");
+        assert_eq!(preset.slots[4].model, Some(101));
+        let written = Preset::parse(&preset.encode()).unwrap();
+        assert_eq!(written.slots[4].model, Some(101));
     }
 
     #[test]

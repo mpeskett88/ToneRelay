@@ -201,8 +201,20 @@ class CommandCharacteristic(Characteristic):
 
     def _run(self, raw: bytes):
         with self.lock:
-            result = handle_command(raw)
+            if len(raw) > 65535:
+                result = {"ok": False, "error": "too large for Bluetooth; use Wi-Fi"}
+            else:
+                result = handle_command(raw)
         payload = json.dumps(result, separators=(",", ":")).encode("utf-8")
+        if len(payload) > 65535:
+            payload = json.dumps(
+                {
+                    "ok": False,
+                    "op": result.get("op") if isinstance(result, dict) else None,
+                    "error": "too large for Bluetooth; use Wi-Fi",
+                },
+                separators=(",", ":"),
+            ).encode("utf-8")
         GLib.idle_add(self.rsp_char.send_chunked, payload)
 
 

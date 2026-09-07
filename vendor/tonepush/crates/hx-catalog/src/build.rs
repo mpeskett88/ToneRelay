@@ -20,32 +20,28 @@
 //! and that second count `n'` - which is what [`Catalog::type_tag`] and
 //! [`Catalog::value_count_2`] exist for. See PROTOCOL.md.
 //!
-//! **The pedal will not take what this produces.** Checked on hardware: a
-//! document rebuilt from its own symbolic form, with a chain identical to the
-//! original block for block and value for value, is written and read back
-//! empty. A `.hlx` does not record how each number was encoded - the same 1.0
-//! is an integer in one preset and a float in another - and the document
-//! carries a table of byte offsets into itself, so the wrong tag width is fatal
-//! rather than cosmetic. This is the same failure the parser's own notes
-//! describe: re-encode a wide tag narrow and "the device reads the result as
-//! empty".
-//!
-//! So this is for reading a `.hxb` into something inspectable, and for building
-//! tones offline - not for restoring onto a pedal. Restoring goes through
-//! `.hxbundle`, which keeps the device's own bytes and cannot lose their shape.
+//! **Tag choice in the value array is load-bearing.** Captured documents store
+//! a switch as MessagePack bool and a menu as a compact unsigned int. Writing
+//! those as `f32` shifts the section-offset table. Named parameters follow the
+//! catalog (`Kind::Switch` / `Kind::Enum` / continuous); extras under `@unnamed`
+//! follow the same bool/int/float split. Stomp fixtures then re-encode
+//! byte-for-byte. A Helix Floor preset (Andy Timmons, 2026-09-02) rebuilt the
+//! same way was the same length but not byte-identical; opcode 8 onto spare
+//! 05D still loaded the chain (9 blocks, fingerprint match).
 //!
 //! This writes slots into an existing document rather than inventing one from
 //! nothing. A preset carries a great deal besides its chain - a section table
 //! of byte offsets into itself, snapshot state, footswitch assignments - and
 //! the honest way to get those right is to start from a document the device
-//! wrote and replace the part being described.
+//! wrote, replace the chain, then overlay snapshots, controller assignments
+//! and Command Centre from the `.hlx` when the file carries them.
 
 use serde_json::Value as Json;
 
 use hx_proto::msgpack::{Key, Value};
 use hx_proto::Preset;
 
-use crate::Catalog;
+use crate::{Catalog, Kind};
 
 /// Wire keys, named. These mirror `hx_proto::preset::key`, which is private -
 /// deliberately, since nothing outside the parser should be reading a document
@@ -87,10 +83,14 @@ pub struct Built {
 ///
 /// Blocks land in the order the document names them, `block0` first, into the
 /// slots the template keeps for them. A block that will not resolve is reported
-/// and its slot left empty rather than filled with a guess.
+/// and its slot left empty rather than filled with a guess. Snapshots,
+/// controller assignments and Command Centre are then copied from the file
+/// when those JSON objects are present, so an import is the whole preset
+/// rather than only the chain.
 pub fn slots_from_hlx(preset: &mut Preset, document: &Json, catalog: &Catalog) -> Built {
     let mut skipped = Vec::new();
     let mut blocks = 0;
+    let mut placements: Vec<crate::apply::Placement> = Vec::new();
 
     // Where a path's blocks may go: everything between its input and its
     // output, and between its split and its join. Read off the template rather
@@ -186,6 +186,19 @@ pub fn slots_from_hlx(preset: &mut Preset, document: &Json, catalog: &Catalog) -
                 Ok(slot) => {
                     if preset.paste_slot(position, &slot) {
                         blocks += 1;
+                        if let Some(block_n) = block_key
+                            .strip_prefix("block")
+                            .and_then(|d| d.parse::<usize>().ok())
+                        {
+                            if let Some(model) = preset.slots.get(position).and_then(|s| s.model) {
+                                placements.push(crate::apply::Placement {
+                                    dsp: dsp_index,
+                                    block: block_n,
+                                    slot: position,
+                                    model,
+                                });
+                            }
+                        }
                     } else {
                         skipped.push(format!("{block_key}: slot {position} would not take it"));
                     }
@@ -233,6 +246,8 @@ pub fn slots_from_hlx(preset: &mut Preset, document: &Json, catalog: &Catalog) -
             }
         }
     }
+
+    crate::apply::apply_hlx_rest(preset, document, catalog, &placements, &mut skipped);
 
     Built { blocks, skipped }
 }
@@ -368,16 +383,75 @@ fn build_slot(node: &Json, cab: Option<&Json>, catalog: &Catalog) -> Result<Valu
 /// preset and a silent one. The values the symbol table does not name follow the
 /// named ones; `to_hlx` keeps them under `@unnamed`, and a file from HX Edit
 /// will not have them.
-fn values_for(symbol: &crate::Symbol, node: &Json, catalog: &Catalog) -> Vec<f32> {
+fn values_for(symbol: &crate::Symbol, node: &Json, catalog: &Catalog) -> Vec<Value> {
     let mut values = Vec::with_capacity(symbol.parameters.len());
-    for id in &symbol.parameters {
-        let found = node.get(id).and_then(number_of);
-        values.push(found.unwrap_or_else(|| default_of(catalog, symbol.number, id)));
+    for (index, id) in symbol.parameters.iter().enumerate() {
+        let default = default_of(catalog, symbol.number, id);
+        values.push(pack_named(
+            catalog.param(symbol.number, index),
+            node.get(id),
+            default,
+        ));
     }
     if let Some(extra) = node.get("@unnamed").and_then(Json::as_array) {
-        values.extend(extra.iter().filter_map(number_of));
+        values.extend(extra.iter().filter_map(pack_unnamed));
     }
     values
+}
+
+/// Switch and enum tags as the device stores them, not as `f32`.
+///
+/// Captured documents keep a switch as MessagePack bool and a menu as a compact
+/// unsigned int. Writing both as `f32` (the previous constructor) grew the
+/// value array by four bytes per such parameter and shifted the section table.
+fn pack_named(param: Option<&crate::Param>, json: Option<&Json>, default: f32) -> Value {
+    match param.map(|p| p.kind) {
+        Some(Kind::Switch) => Value::Bool(json_bool(json).unwrap_or(default >= 0.5)),
+        Some(Kind::Enum) => Value::UInt(json.and_then(number_of).unwrap_or(default).round() as u64),
+        _ => Value::F32(json.and_then(number_of).unwrap_or(default)),
+    }
+}
+
+/// Catalog-unknown extras: bools and small integers as the device tagged them.
+fn pack_unnamed(json: &Json) -> Option<Value> {
+    match json {
+        Json::Bool(b) => Some(Value::Bool(*b)),
+        Json::Number(n) => {
+            if let Some(u) = n.as_u64() {
+                return Some(if u <= 1 {
+                    Value::Bool(u == 1)
+                } else {
+                    Value::UInt(u)
+                });
+            }
+            if let Some(i) = n.as_i64() {
+                return Some(if i == 0 || i == 1 {
+                    Value::Bool(i == 1)
+                } else if i > 1 {
+                    Value::UInt(i as u64)
+                } else {
+                    Value::WideInt(i, 1)
+                });
+            }
+            let f = n.as_f64()? as f32;
+            if f == 0.0 || f == 1.0 {
+                Some(Value::Bool(f >= 0.5))
+            } else if f.fract() == 0.0 && f > 1.0 {
+                Some(Value::UInt(f as u64))
+            } else {
+                Some(Value::F32(f))
+            }
+        }
+        _ => None,
+    }
+}
+
+fn json_bool(json: Option<&Json>) -> Option<bool> {
+    match json? {
+        Json::Bool(b) => Some(*b),
+        Json::Number(n) => n.as_f64().map(|f| f >= 0.5),
+        _ => None,
+    }
 }
 
 /// Which firmware symbol a `@model` names.
@@ -427,14 +501,11 @@ pub fn resolve<'a>(catalog: &'a Catalog, name: &str, node: &Json) -> Option<&'a 
 
 /// A value array in the shape the wire uses: the count, the second count, and
 /// the values.
-fn counted(values: &[f32], count_2: i64) -> Value {
+fn counted(values: &[Value], count_2: i64) -> Value {
     Value::Map(vec![
         (Key::Int(key::COUNT), Value::Int(values.len() as i64)),
         (Key::Int(key::COUNT_2), Value::Int(count_2)),
-        (
-            Key::Int(key::ARRAY),
-            Value::Array(values.iter().map(|v| Value::F32(*v)).collect()),
-        ),
+        (Key::Int(key::ARRAY), Value::Array(values.to_vec())),
     ])
 }
 

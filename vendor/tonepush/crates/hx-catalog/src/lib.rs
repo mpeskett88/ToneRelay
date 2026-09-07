@@ -13,6 +13,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+pub mod apply;
 pub mod build;
 pub mod extract;
 mod format;

@@ -102,12 +102,20 @@ path does not have enough DSP for that model.
 These ops exist today: `ping`, `info`, `preset_info`, `list_presets`,
 `select_preset`, `select_snapshot`, `events`, `list_setlists`, `list_irs`,
 `list_models`, `move_block`, `set_model`, `clear_block`, `save_preset`,
+`export_preset`, `import_preset`,
 `set_param`, `get_param`, `get_state`, `set_bool`, `set_int`, `set_bypass`,
 `set_trails`, `set_global`, `set_assign`, `get_assign`, `topology`.
 
 `set_param` uses wire values, not HX Edit knob labels (Essex Drive UI 4.1 is
 `"float": 0.41`). `list_models` and named knobs need the HX Edit catalog on
 the Pi; see the README. `save_preset` writes the edit buffer to flash.
+`export_preset` reads a stored slot (not unsaved edits) as a `.hlx` JSON
+document. It needs the HX Edit catalog. `import_preset` overwrites a chosen
+slot (Helix Floor has no unused slots). It rebuilds the file into a native
+document and writes that blob with opcode 8, without loading the dest unless
+it is already playing. Snapshots, controller assignments, and Command Centre
+come from the file when those JSON objects are present. Bluetooth
+replies over about 64 KB fail; use Wi-Fi for file transfer.
 
 ## Bluetooth
 

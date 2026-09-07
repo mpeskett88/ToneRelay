@@ -151,3 +151,12 @@ export function GraphIcon() {
     </svg>
   );
 }
+
+export function ExportIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden className="export-icon">
+      <path d="M12 3v12M8 7l4-4 4 4" {...stroke} />
+      <path d="M5 14v5h14v-5" {...stroke} />
+    </svg>
+  );
+}

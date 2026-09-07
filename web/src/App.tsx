@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent } from "react";
 import rawCatalog from "../../hxbridge/model_param_index.json";
 import {
   BleTransport,
@@ -8,6 +8,7 @@ import {
   rememberTransport,
   rememberedTransport,
   WsTransport,
+  type JsonValue,
   type Transport,
 } from "./bridge";
 import {
@@ -16,8 +17,10 @@ import {
   type Catalog,
   type CatalogParam,
   type DumpBlock,
+  helixSlotLabel,
   knobToParam,
   choiceIndex,
+  choiceWireBase,
   usesChoiceSegment,
   paramLabel,
   uiScale,
@@ -50,7 +53,7 @@ import {
 } from "./chain";
 import EqGraph from "./EqGraph";
 import { isParametricEq } from "./eqCurve";
-import { CategoryIcon, GraphIcon, TrashIcon } from "./icons";
+import { CategoryIcon, ExportIcon, GraphIcon, TrashIcon } from "./icons";
 
 const catalog = rawCatalog as unknown as Catalog;
 
@@ -87,6 +90,61 @@ type Setlist = { index: number; name: string };
 function setlistLabel(index: number, names: Setlist[]): string {
   const found = names.find((s) => s.index === index)?.name?.trim();
   return found ? found : `Setlist ${index + 1}`;
+}
+
+function isHlxDocument(value: unknown): value is JsonValue {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const data = (value as { data?: unknown }).data;
+  if (!data || typeof data !== "object") {
+    return false;
+  }
+  return "tone" in (data as object);
+}
+
+function hlxMetaName(hlx: JsonValue): string {
+  if (!hlx || typeof hlx !== "object" || Array.isArray(hlx)) {
+    return "Imported";
+  }
+  const data = (hlx as { data?: unknown }).data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return "Imported";
+  }
+  const meta = (data as { meta?: unknown }).meta;
+  if (!meta || typeof meta !== "object" || Array.isArray(meta)) {
+    return "Imported";
+  }
+  const name = (meta as { name?: unknown }).name;
+  return typeof name === "string" && name.trim() ? name.trim() : "Imported";
+}
+
+async function saveHlxFile(filename: string, hlx: JsonValue): Promise<void> {
+  const text = `${JSON.stringify(hlx, null, 2)}\n`;
+  const file = new File([text], filename, { type: "application/octet-stream" });
+  const nav = navigator as Navigator & {
+    canShare?: (data: { files: File[] }) => boolean;
+    share?: (data: { files: File[] }) => Promise<void>;
+  };
+  if (typeof nav.canShare === "function" && nav.canShare({ files: [file] }) && nav.share) {
+    try {
+      await nav.share({ files: [file] });
+      return;
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        return;
+      }
+    }
+  }
+  const url = URL.createObjectURL(file);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function emptySlotNode(slot: number): ChainNode {
@@ -135,6 +193,10 @@ export default function App() {
   const [snapOpen, setSnapOpen] = useState(false);
   const snapMenuRef = useRef<HTMLDivElement>(null);
   const [modelCats, setModelCats] = useState<ModelCategory[]>([]);
+  const [placeMode, setPlaceMode] = useState(false);
+  const [pendingHlx, setPendingHlx] = useState<{ name: string; hlx: JsonValue } | null>(null);
+  const [confirmIndex, setConfirmIndex] = useState<number | null>(null);
+  const importFileRef = useRef<HTMLInputElement>(null);
 
   useLayoutEffect(() => {
     function syncAppHeight() {
@@ -390,6 +452,7 @@ export default function App() {
       const listed = await client.request({ op: "list_presets", setlist: next });
       setSetlist(next);
       setPresets((listed.presets as Preset[]) ?? []);
+      setConfirmIndex(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -418,6 +481,105 @@ export default function App() {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
+      setBusy(null);
+    }
+  }
+
+  function cancelImport() {
+    setPlaceMode(false);
+    setPendingHlx(null);
+    setConfirmIndex(null);
+    if (importFileRef.current) {
+      importFileRef.current.value = "";
+    }
+  }
+
+  async function exportPreset(index: number) {
+    if (!client) {
+      return;
+    }
+    setError(null);
+    setBusy("Exporting…");
+    try {
+      const reply = await client.request({ op: "export_preset", setlist, index });
+      const hlx = reply.hlx;
+      if (!isHlxDocument(hlx)) {
+        setError("Export did not return an .hlx document");
+        return;
+      }
+      const filename =
+        typeof reply.filename === "string" && reply.filename.endsWith(".hlx")
+          ? reply.filename
+          : `${typeof reply.name === "string" && reply.name ? reply.name : "preset"}.hlx`;
+      await saveHlxFile(filename, hlx);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function onImportFile(ev: ChangeEvent<HTMLInputElement>) {
+    const file = ev.target.files?.[0];
+    ev.target.value = "";
+    if (!file) {
+      return;
+    }
+    setError(null);
+    try {
+      const text = await file.text();
+      const parsed: unknown = JSON.parse(text);
+      if (!isHlxDocument(parsed)) {
+        setError("That file is not an .hlx preset");
+        return;
+      }
+      setPendingHlx({ name: hlxMetaName(parsed), hlx: parsed });
+      setPlaceMode(true);
+      setConfirmIndex(null);
+      setMenuOpen(true);
+    } catch {
+      setError("That file is not an .hlx preset");
+    }
+  }
+
+  async function confirmImport() {
+    if (!client || !pendingHlx || confirmIndex === null) {
+      return;
+    }
+    const index = confirmIndex;
+    setError(null);
+    setBusy("Importing…");
+    try {
+      const reply = await client.request({
+        op: "import_preset",
+        setlist,
+        index,
+        hlx: pendingHlx.hlx,
+      });
+      try {
+        const listed = await client.request({ op: "list_presets", setlist });
+        setPresets((listed.presets as Preset[]) ?? []);
+        const state = await client.request({ op: "get_state" });
+        await applyState(state as {
+          blocks?: DumpBlock[];
+          paths?: TopoPath[];
+          snapshots?: string[];
+          setlist?: number;
+          index?: number;
+        });
+      } catch {
+        /* import already landed; list/state refresh is best-effort */
+      }
+      const skipped = Array.isArray(reply.skipped)
+        ? reply.skipped.filter((s): s is string => typeof s === "string")
+        : [];
+      if (skipped.length > 0) {
+        setError(`Imported with gaps: ${skipped.slice(0, 4).join("; ")}`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      cancelImport();
       setBusy(null);
     }
   }
@@ -560,17 +722,48 @@ export default function App() {
       <div className="stage">
         <aside className="panel list" id="preset-drawer">
           <h2>Presets</h2>
-          <button
-            className="save-preset"
-            type="button"
-            data-testid="save-preset"
-            disabled={Boolean(busy) || selected === null || loadedSetlist === null}
-            onClick={() => {
-              void savePreset();
+          <div className="list-actions">
+            <button
+              className="save-preset"
+              type="button"
+              data-testid="save-preset"
+              disabled={Boolean(busy) || selected === null || loadedSetlist === null || placeMode}
+              onClick={() => {
+                void savePreset();
+              }}
+            >
+              Save
+            </button>
+            <button
+              className="import-preset"
+              type="button"
+              data-testid="import-preset"
+              disabled={Boolean(busy)}
+              onClick={() => {
+                importFileRef.current?.click();
+              }}
+            >
+              Import
+            </button>
+          </div>
+          <input
+            ref={importFileRef}
+            type="file"
+            accept=".hlx,application/json,application/octet-stream"
+            hidden
+            data-testid="import-file"
+            onChange={(ev) => {
+              void onImportFile(ev);
             }}
-          >
-            Save
-          </button>
+          />
+          {placeMode && pendingHlx && (
+            <div className="place-banner">
+              <p>Tap a slot to replace with {pendingHlx.name}</p>
+              <button type="button" data-testid="import-cancel" disabled={Boolean(busy)} onClick={cancelImport}>
+                Cancel
+              </button>
+            </div>
+          )}
           <label className="setlist-pick">
             <span>Setlist</span>
             <select
@@ -588,20 +781,87 @@ export default function App() {
               ))}
             </select>
           </label>
-          {presets.map((p) => (
-            <button
-              key={p.index}
-              data-testid={`preset-${p.index}`}
-              className={loadedSetlist === setlist && selected === p.index ? "preset active" : "preset"}
-              onClick={() => selectPreset(p.index)}
-            >
-              <span>{p.index}</span>
-              <span>{p.name}</span>
-            </button>
-          ))}
+          {presets.map((p) => {
+            const active = loadedSetlist === setlist && selected === p.index;
+            return (
+              <div
+                key={p.index}
+                className={`preset-row${active ? " active" : ""}${placeMode ? " placing" : ""}`}
+              >
+                <button
+                  data-testid={`preset-${p.index}`}
+                  className={active ? "preset active" : "preset"}
+                  type="button"
+                  disabled={Boolean(busy)}
+                  onClick={() => {
+                    if (placeMode) {
+                      setConfirmIndex(p.index);
+                      return;
+                    }
+                    selectPreset(p.index);
+                  }}
+                >
+                  <span>{p.index}</span>
+                  <span>{p.name}</span>
+                </button>
+                <button
+                  className="preset-export"
+                  type="button"
+                  data-testid={`export-preset-${p.index}`}
+                  aria-label={`Export ${p.name || helixSlotLabel(p.index)}`}
+                  disabled={Boolean(busy) || placeMode}
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    void exportPreset(p.index);
+                  }}
+                >
+                  <ExportIcon />
+                </button>
+              </div>
+            );
+          })}
         </aside>
         {menuOpen && (
           <button className="scrim" type="button" aria-label="Close preset list" onClick={() => setMenuOpen(false)} />
+        )}
+        {confirmIndex !== null && pendingHlx && (
+          <>
+            <button
+              className="model-scrim"
+              type="button"
+              aria-label="Cancel overwrite"
+              onClick={() => setConfirmIndex(null)}
+            />
+            <div className="overwrite-sheet" role="dialog" aria-modal="true" aria-label="Overwrite preset">
+              <h2>Overwrite slot</h2>
+              <p>
+                Replace {helixSlotLabel(confirmIndex)}
+                {presets.find((p) => p.index === confirmIndex)?.name
+                  ? ` “${presets.find((p) => p.index === confirmIndex)?.name}”`
+                  : ""}{" "}
+                with “{pendingHlx.name}”? This overwrites the slot.
+              </p>
+              <p className="hint">
+                The chain and name are replaced. Snapshots and assignments may stay as they are.
+              </p>
+              <div className="overwrite-actions">
+                <button type="button" className="overwrite-cancel" disabled={Boolean(busy)} onClick={() => setConfirmIndex(null)}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="overwrite-confirm"
+                  data-testid="import-confirm"
+                  disabled={Boolean(busy)}
+                  onClick={() => {
+                    void confirmImport();
+                  }}
+                >
+                  Replace
+                </button>
+              </div>
+            </div>
+          </>
         )}
         <Editor
           client={client}
@@ -1836,7 +2096,11 @@ function ParamRow({
   const choices = param.choices;
 
   if (choices && choices.length > 0) {
-    const n = choiceIndex(typeof raw === "boolean" || typeof raw === "number" ? raw : undefined, choices.length);
+    const base = choiceWireBase(param.min);
+    const n = choiceIndex(
+      typeof raw === "number" ? raw - base : typeof raw === "boolean" ? raw : undefined,
+      choices.length,
+    );
     const labeledBool = param.usb === "bool";
     const pick = (v: number) => {
       if (labeledBool) {
@@ -1844,8 +2108,9 @@ function ParamRow({
         patch(on);
         void send("set_bool", { value: on });
       } else {
-        patch(v);
-        void send("set_int", { value: v });
+        const wire = v + base;
+        patch(wire);
+        void send("set_int", { value: wire });
       }
     };
     if (usesChoiceSegment(choices.length)) {
