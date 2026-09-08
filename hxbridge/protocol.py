@@ -35,6 +35,7 @@ OPS = [
     "set_model",
     "clear_block",
     "save_preset",
+    "rename_preset",
     "export_preset",
     "import_preset",
     "set_param",
@@ -314,6 +315,23 @@ def handle_command(raw: bytes) -> dict:
                 return {"ok": False, "op": op, "error": "name must be a non-empty string"}
             body["name"] = name
         return run_usb(body, timeout=20.0)
+
+    if op == "rename_preset":
+        setlist = _parse_int(cmd.get("setlist"), 0, 7)
+        index = _parse_int(cmd.get("index"), 0, 127)
+        if setlist is None:
+            return {"ok": False, "op": op, "error": "setlist must be 0-7"}
+        if index is None:
+            return {"ok": False, "op": op, "error": "index must be an integer 0-127"}
+        name = cmd.get("name")
+        if not isinstance(name, str) or not name.strip():
+            return {"ok": False, "op": op, "error": "name must be a non-empty string"}
+        if len(name.strip()) > 16:
+            return {"ok": False, "op": op, "error": "name must be 1-16 characters"}
+        return run_usb(
+            {"op": op, "setlist": setlist, "index": index, "name": name.strip()},
+            timeout=20.0,
+        )
 
     if op == "export_preset":
         setlist = _parse_int(cmd.get("setlist"), 0, 7)

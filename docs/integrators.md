@@ -104,13 +104,14 @@ These ops exist today: `ping`, `info`, `preset_info`, `list_presets`,
 `list_models`, `list_favorites`, `apply_favorite`, `save_favorite`,
 `rename_favorite`, `delete_favorite`,
 `move_block`, `set_model`, `clear_block`, `save_preset`,
-`export_preset`, `import_preset`,
+`rename_preset`, `export_preset`, `import_preset`,
 `set_param`, `get_param`, `get_state`, `set_bool`, `set_int`, `set_bypass`,
 `set_trails`, `set_global`, `set_assign`, `get_assign`, `topology`.
 
 `set_param` uses wire values, not HX Edit knob labels (Essex Drive UI 4.1 is
 `"float": 0.41`). `list_models` and named knobs need the HX Edit catalog on
 the Pi; see the README. `save_preset` writes the edit buffer to flash.
+`rename_preset` takes `"setlist"`, `"index"`, and `"name"` (opcode 6, 1–16 characters) and changes that slot's label only.
 `export_preset` reads a stored slot (not unsaved edits) as a `.hlx` JSON
 document. It needs the HX Edit catalog. `import_preset` overwrites a chosen
 slot (Helix Floor has no unused slots). It rebuilds the file into a native

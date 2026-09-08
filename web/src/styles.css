@@ -361,6 +361,12 @@ select:focus-visible {
   cursor: pointer;
 }
 
+.preset-export .export-icon,
+.preset-export .pencil-icon {
+  display: block;
+  margin: 0 auto;
+}
+
 .preset-export:disabled {
   opacity: 0.35;
   cursor: not-allowed;
@@ -407,6 +413,10 @@ select:focus-visible {
   font-size: var(--fs-16);
 }
 
+.overwrite-sheet .fav-save-label {
+  margin-bottom: var(--space-3);
+}
+
 .overwrite-actions {
   display: flex;
   gap: var(--space-2);
@@ -435,6 +445,11 @@ select:focus-visible {
   border: 0;
   background: var(--danger);
   color: #fff;
+}
+
+.overwrite-confirm.ok {
+  background: var(--accent);
+  color: var(--accent-ink);
 }
 
 .overwrite-cancel:disabled,
@@ -1199,9 +1214,11 @@ button.inspector-fav:active {
   padding: 0 0.75rem;
   font: inherit;
   font-size: 1rem;
-  color: var(--text);
-  background: var(--bg);
-  border: 1px solid var(--line);
+  color: var(--text-primary);
+  -webkit-text-fill-color: var(--text-primary);
+  caret-color: var(--text-primary);
+  background: var(--bg-base);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
 }
 

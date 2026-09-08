@@ -52,7 +52,7 @@ On the first visit, tap **Wi-Fi**. After a successful connect the GUI stores `to
 
 On iPhone, use Share → Add to Home Screen. The icon is `apple-touch-icon.png`. The page title is ToneRelay.
 
-The preset list is a drawer behind the header menu button on every viewport, including a laptop browser. It starts closed. The menu button opens and hides it. Save writes the loaded edit buffer to the loaded slot. Import picks an `.hlx` file (iOS Files, including OneDrive if that app is a Files location) then asks you to tap a slot and confirm the overwrite. The write is the whole preset: chain, snapshots, controller assignments, and Command Centre. Each row has an export control that downloads the stored slot as `.hlx` without loading it. On iPhone, export uses the share sheet when the browser allows file sharing. The chain grid stretches to the editor width. Effect tiles grow between about 6.25 rem and 9.25 rem; below that floor the board scrolls sideways. On a phone the chain still scrolls.
+The preset list is a drawer behind the header menu button on every viewport, including a laptop browser. It starts closed. The menu button opens and hides it. Save writes the loaded edit buffer to the loaded slot. Import picks an `.hlx` file (iOS Files, including OneDrive if that app is a Files location) then asks you to tap a slot and confirm the overwrite. The write is the whole preset: chain, snapshots, controller assignments, and Command Centre. Each row has a rename control (pencil) and an export control. Rename opens a name sheet (`rename_preset`, 16 characters) and writes the slot label without reloading the tone. Export downloads the stored slot as `.hlx` without loading it. On iPhone, export uses the share sheet when the browser allows file sharing. The chain grid stretches to the editor width. Effect tiles grow between about 6.25 rem and 9.25 rem; below that floor the board scrolls sideways. On a phone the chain still scrolls.
 
 ## Editor
 
@@ -64,7 +64,7 @@ Input and Output Assign menus use catalog labels when the daemon has HX Edit res
 
 ## Commands
 
-The command set is the GATT set plus `get_state`, `preset_info`, `events`, `select_snapshot`, `move_block`, `set_model`, `clear_block`, `list_models`, `list_favorites`, `apply_favorite`, `save_favorite`, `rename_favorite`, `delete_favorite`, `list_irs`, `save_preset`, `export_preset`, and `import_preset`.
+The command set is the GATT set plus `get_state`, `preset_info`, `events`, `select_snapshot`, `move_block`, `set_model`, `clear_block`, `list_models`, `list_favorites`, `apply_favorite`, `save_favorite`, `rename_favorite`, `delete_favorite`, `list_irs`, `save_preset`, `rename_preset`, `export_preset`, and `import_preset`.
 
 `get_state` reads the loaded preset. The reply has `blocks`, `paths`, `snapshots`, `snapshot` (0-based current snapshot from the preset document), and the active `{setlist, index, name}`. `paths` is the TonePush layout and includes `split_at` / `join_at` (the Path A slot each junction sits just before). The GUI draws eight Path A cells and eight Path B cells; split and merge are wire points at those attach slots. When the catalog is loaded, I/O blocks also have `assign_label` and `assign_menu`, and each knob may include `choices` (the HX Edit menu for that parameter) and `format` (how to print the live wire value). Delay, reverb, and FX Loop blocks may include `trails`. IR Select `choices` are device IR names, not the catalog dashes. Occupied blocks also have `load` (catalog DSP percent for that width).
 
@@ -84,7 +84,7 @@ python3 ~/hxblue/.agents/skills/webapp-testing/scripts/with_server.py \
   -- .venv/bin/python ~/hxblue/hxbridge/test_gui.py
 ```
 
-Live Helix checks stay read-only (`preset_info`, `get_state`) unless `HXBRIDGE_LIVE_MOVE=1`. Opcode 43 moves a block. Opcode 40 changes a block's model. Opcode 28 clears a slot. Opcode 71 saves the loaded slot to flash. Opcode 8 writes a rebuilt `.hlx` into a setlist slot (`import_preset`).
+Live Helix checks stay read-only (`preset_info`, `get_state`) unless `HXBRIDGE_LIVE_MOVE=1`. Opcode 43 moves a block. Opcode 40 changes a block's model. Opcode 28 clears a slot. Opcode 6 renames a stored slot. Opcode 71 saves the loaded slot to flash. Opcode 8 writes a rebuilt `.hlx` into a setlist slot (`import_preset`).
 
 ## Transports
 

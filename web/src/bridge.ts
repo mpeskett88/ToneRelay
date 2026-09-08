@@ -61,6 +61,7 @@ export function timeoutFor(op: string): number {
     op === "select_preset" ||
     op === "preset_info" ||
     op === "save_preset" ||
+    op === "rename_preset" ||
     op === "list_setlists" ||
     op === "list_irs" ||
     op === "list_favorites" ||

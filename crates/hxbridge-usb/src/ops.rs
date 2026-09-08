@@ -13,6 +13,7 @@ const GLOBAL_IDS: [i64; 2] = [30, 134];
 const HLX_MAX_BYTES: usize = 2 * 1024 * 1024;
 const FAVORITE_SLOTS: i64 = 128;
 const FAVORITE_NAME_MAX: usize = 32;
+const PRESET_NAME_MAX: usize = 16;
 const FAV_RECORD: i64 = 64;
 const FAV_BODY: i64 = 20;
 const FAV_IDS: i64 = 24;
@@ -99,6 +100,7 @@ pub fn handle(
         "set_model" => set_model(session, catalog, obj, follow),
         "clear_block" => clear_block(session, obj, follow),
         "save_preset" => save_preset(session, obj, follow),
+        "rename_preset" => rename_preset(session, obj, follow),
         "export_preset" => export_preset(session, catalog, obj),
         "import_preset" => import_preset(session, catalog, obj, follow),
         "set_param" => set_param(session, obj),
@@ -137,7 +139,7 @@ fn info(session: &mut Session, catalog: Option<&Catalog>, follow: &mut FollowSta
             "select_snapshot", "events", "list_setlists", "list_irs", "list_favorites",
             "apply_favorite", "save_favorite", "rename_favorite", "delete_favorite",
             "move_block", "set_model",
-            "clear_block", "save_preset", "export_preset", "import_preset",
+            "clear_block", "save_preset", "rename_preset", "export_preset", "import_preset",
             "set_param", "get_param", "get_state", "topology",
             "set_bool", "set_int", "set_bypass", "set_trails",
             "set_global", "set_assign", "get_assign", "list_models",
@@ -651,6 +653,36 @@ fn save_preset(
         }),
         Err(e) => usb_err("save_preset", e),
     }
+}
+
+fn rename_preset(
+    session: &mut Session,
+    obj: &serde_json::Map<String, Value>,
+    follow: &mut FollowState,
+) -> Value {
+    let (setlist, index) = match parse_slot(obj, "rename_preset") {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let Some(name) = obj.get("name").and_then(Value::as_str).map(str::trim) else {
+        return err("rename_preset", "name must be a non-empty string");
+    };
+    if name.is_empty() || name.len() > PRESET_NAME_MAX {
+        return err("rename_preset", "name must be 1-16 characters");
+    }
+    if let Err(e) = session.rename_preset(setlist, index, name) {
+        return usb_err("rename_preset", e);
+    }
+    if follow.setlist == Some(setlist) && follow.index == Some(index) {
+        follow.name = Some(name.to_string());
+    }
+    json!({
+        "ok": true,
+        "op": "rename_preset",
+        "setlist": setlist,
+        "index": index,
+        "name": name,
+    })
 }
 
 fn catalog_required<'a>(op: &str, catalog: Option<&'a Catalog>) -> Result<&'a Catalog, Value> {
@@ -1509,6 +1541,14 @@ mod tests {
     #[test]
     fn save_preset_opcode_and_keys() {
         assert_eq!(rpc::op::SAVE_PRESET, 71);
+        assert_eq!(rpc::key::SETLIST, 107);
+        assert_eq!(rpc::key::PRESET_INDEX, 108);
+        assert_eq!(rpc::key::NAME, 109);
+    }
+
+    #[test]
+    fn rename_preset_opcode_and_keys() {
+        assert_eq!(rpc::op::RENAME_PRESET, 6);
         assert_eq!(rpc::key::SETLIST, 107);
         assert_eq!(rpc::key::PRESET_INDEX, 108);
         assert_eq!(rpc::key::NAME, 109);

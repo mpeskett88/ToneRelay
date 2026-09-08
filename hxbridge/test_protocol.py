@@ -81,6 +81,7 @@ class CommandTests(unittest.TestCase):
         self.assertIn("set_model", r["ops"])
         self.assertIn("clear_block", r["ops"])
         self.assertIn("save_preset", r["ops"])
+        self.assertIn("rename_preset", r["ops"])
         self.assertIn("export_preset", r["ops"])
         self.assertIn("import_preset", r["ops"])
 
@@ -153,6 +154,37 @@ class NewOpsTests(unittest.TestCase):
             )
             self.assertTrue(r["ok"])
             self.assertEqual(run_usb.call_args[0][0]["name"], "Essex A30")
+
+    def test_rename_preset_rejects_empty_name_and_bad_slot(self):
+        r = handle_command(b'{"op":"rename_preset","setlist":2,"index":17,"name":"   "}')
+        self.assertFalse(r["ok"])
+        self.assertIn("name", r["error"])
+        r = handle_command(b'{"op":"rename_preset","index":17,"name":"Essex"}')
+        self.assertFalse(r["ok"])
+        self.assertIn("setlist", r["error"])
+        r = handle_command(b'{"op":"rename_preset","setlist":2,"name":"Essex"}')
+        self.assertFalse(r["ok"])
+        self.assertIn("index", r["error"])
+        r = handle_command(
+            b'{"op":"rename_preset","setlist":2,"index":17,"name":"12345678901234567"}'
+        )
+        self.assertFalse(r["ok"])
+        self.assertIn("1-16", r["error"])
+
+    def test_rename_preset_ok(self):
+        from unittest.mock import patch
+
+        with patch(
+            "protocol.run_usb",
+            return_value={"ok": True, "op": "rename_preset", "setlist": 2, "index": 17, "name": "Essex Twin"},
+        ) as run_usb:
+            r = handle_command(
+                b'{"op":"rename_preset","setlist":2,"index":17,"name":" Essex Twin "}'
+            )
+            self.assertTrue(r["ok"])
+            self.assertEqual(run_usb.call_args[0][0]["setlist"], 2)
+            self.assertEqual(run_usb.call_args[0][0]["index"], 17)
+            self.assertEqual(run_usb.call_args[0][0]["name"], "Essex Twin")
 
     def test_list_models_ok(self):
         from unittest.mock import patch

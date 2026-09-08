@@ -198,6 +198,7 @@ export default function App() {
   const [placeMode, setPlaceMode] = useState(false);
   const [pendingHlx, setPendingHlx] = useState<{ name: string; hlx: JsonValue } | null>(null);
   const [confirmIndex, setConfirmIndex] = useState<number | null>(null);
+  const [renameEdit, setRenameEdit] = useState<{ index: number; draft: string } | null>(null);
   const importFileRef = useRef<HTMLInputElement>(null);
 
   useLayoutEffect(() => {
@@ -487,6 +488,31 @@ export default function App() {
     }
   }
 
+  async function renamePreset() {
+    if (!client || renameEdit == null) {
+      return;
+    }
+    const name = renameEdit.draft.trim();
+    if (!name) {
+      return;
+    }
+    const index = renameEdit.index;
+    setError(null);
+    setBusy("Renaming…");
+    try {
+      await client.request({ op: "rename_preset", setlist, index, name });
+      setPresets((rows) => rows.map((p) => (p.index === index ? { ...p, name } : p)));
+      if (loadedSetlist === setlist && selected === index) {
+        setLoadedName(name);
+      }
+      setRenameEdit(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   function cancelImport() {
     setPlaceMode(false);
     setPendingHlx(null);
@@ -660,6 +686,7 @@ export default function App() {
           aria-expanded={menuOpen}
           onClick={() => {
             setSnapOpen(false);
+            setRenameEdit(null);
             setMenuOpen((v) => !v);
           }}
         >
@@ -809,6 +836,19 @@ export default function App() {
                 <button
                   className="preset-export"
                   type="button"
+                  data-testid={`rename-preset-${p.index}`}
+                  aria-label={`Rename ${p.name || helixSlotLabel(p.index)}`}
+                  disabled={Boolean(busy) || placeMode}
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    setRenameEdit({ index: p.index, draft: p.name.slice(0, 16) });
+                  }}
+                >
+                  <PencilIcon />
+                </button>
+                <button
+                  className="preset-export"
+                  type="button"
                   data-testid={`export-preset-${p.index}`}
                   aria-label={`Export ${p.name || helixSlotLabel(p.index)}`}
                   disabled={Boolean(busy) || placeMode}
@@ -863,6 +903,60 @@ export default function App() {
                 </button>
               </div>
             </div>
+          </>
+        )}
+        {renameEdit && (
+          <>
+            <button
+              className="model-scrim"
+              type="button"
+              aria-label="Cancel rename"
+              onClick={() => setRenameEdit(null)}
+            />
+            <form
+              className="overwrite-sheet"
+              data-testid="rename-preset-form"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Rename preset"
+              onSubmit={(ev) => {
+                ev.preventDefault();
+                void renamePreset();
+              }}
+            >
+              <h2>Rename preset</h2>
+              <label className="fav-save-label">
+                Name
+                <input
+                  className="fav-save-input"
+                  value={renameEdit.draft}
+                  maxLength={16}
+                  autoComplete="off"
+                  autoFocus
+                  data-testid="rename-preset-name"
+                  onChange={(ev) => setRenameEdit({ ...renameEdit, draft: ev.target.value })}
+                />
+              </label>
+              <div className="overwrite-actions">
+                <button
+                  type="button"
+                  className="overwrite-cancel"
+                  data-testid="rename-preset-cancel"
+                  disabled={Boolean(busy)}
+                  onClick={() => setRenameEdit(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="overwrite-confirm ok"
+                  data-testid="rename-preset-save"
+                  disabled={Boolean(busy) || renameEdit.draft.trim() === ""}
+                >
+                  Save
+                </button>
+              </div>
+            </form>
           </>
         )}
         <Editor
