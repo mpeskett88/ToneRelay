@@ -163,6 +163,16 @@ export function TrashIcon() {
   );
 }
 
+export function MoreIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden className="more-icon">
+      <circle cx="12" cy="6" r="1.4" fill="currentColor" />
+      <circle cx="12" cy="12" r="1.4" fill="currentColor" />
+      <circle cx="12" cy="18" r="1.4" fill="currentColor" />
+    </svg>
+  );
+}
+
 export function GraphIcon() {
   return (
     <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden className="graph-icon">

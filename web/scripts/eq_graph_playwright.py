@@ -98,6 +98,7 @@ def run_flow(page, width, height):
     page.get_by_test_id("connect-wifi").click()
     page.get_by_test_id("chain-cell-3").wait_for()
     page.get_by_test_id("chain-cell-3").click()
+    page.get_by_test_id("inspector-actions").click()
     page.get_by_test_id("eq-graph-open").click()
     page.get_by_test_id("eq-overlay").wait_for()
     page.screenshot(path=f"/tmp/eq-graph-{width}x{height}.png")
@@ -145,7 +146,8 @@ def run_flow(page, width, height):
     page.get_by_test_id("eq-graph-close").click()
     page.get_by_test_id("eq-overlay").wait_for(state="hidden")
     assert page.get_by_text("Low Freq").is_visible()
-    assert page.get_by_test_id("eq-graph-open").is_visible()
+    assert page.get_by_test_id("inspector-actions").is_visible()
+    assert page.get_by_test_id("eq-graph-open").count() == 0
     return {"writes": changed, "portrait": portrait}
 
 

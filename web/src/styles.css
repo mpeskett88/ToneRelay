@@ -1095,7 +1095,7 @@ button.inspector-clear:active {
   background: #f8717122;
 }
 
-button.inspector-graph {
+button.inspector-more {
   flex: none;
   display: flex;
   align-items: center;
@@ -1105,14 +1105,53 @@ button.inspector-graph {
   min-height: var(--touch);
   padding: 0;
   background: var(--bg-elevated-2);
-  color: var(--accent);
-  border: 1px solid var(--accent-muted);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
   cursor: pointer;
 }
 
-button.inspector-graph:active {
+button.inspector-more:active,
+button.inspector-more[aria-expanded="true"] {
+  color: var(--accent);
   background: var(--accent-muted);
+  border-color: var(--accent-muted);
+}
+
+.inspector-actions {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0 0 0.75rem;
+}
+
+.inspector-action {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: var(--touch);
+  padding: 0 var(--space-3);
+  font: inherit;
+  font-size: 0.95rem;
+  text-align: left;
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.inspector-action:active {
+  background: var(--bg-elevated-2);
+}
+
+.inspector-action.danger {
+  color: var(--danger);
+  border-color: #f8717140;
+}
+
+.inspector-action.danger:active {
+  background: #f8717122;
 }
 
 button.inspector-fav {
@@ -1234,6 +1273,7 @@ button.inspector-fav:active {
   align-self: center;
 }
 
+.more-icon,
 .pencil-icon {
   display: block;
 }

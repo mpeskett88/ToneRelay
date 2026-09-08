@@ -55,7 +55,7 @@ import {
 } from "./chain";
 import EqGraph from "./EqGraph";
 import { isParametricEq } from "./eqCurve";
-import { CategoryIcon, ExportIcon, GraphIcon, PencilIcon, StarIcon, TrashIcon } from "./icons";
+import { CategoryIcon, ExportIcon, GraphIcon, MoreIcon, PencilIcon, StarIcon, TrashIcon } from "./icons";
 
 const catalog = rawCatalog as unknown as Catalog;
 
@@ -2151,11 +2151,17 @@ function Inspector({
   const [favOpen, setFavOpen] = useState(false);
   const [favName, setFavName] = useState("");
   const [favBusy, setFavBusy] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const [clearOpen, setClearOpen] = useState(false);
   useEffect(() => {
     setEqOpen(false);
     setFavOpen(false);
+    setActionsOpen(false);
+    setClearOpen(false);
   }, [node.id]);
   const showCategory = !empty && category.toLowerCase() !== node.title.toLowerCase();
+  const canGraph = Boolean(eqDump && !empty);
+  const hasActions = canGraph || Boolean(onSaveFavorite) || Boolean(onClear);
   const head = (
     <>
       <span className="inspector-mark" style={{ backgroundColor: paint.bg, color: paint.fg }}>
@@ -2187,43 +2193,93 @@ function Inspector({
             {head}
           </header>
         )}
-        {eqDump && !empty ? (
+        {hasActions ? (
           <button
             type="button"
-            className="inspector-graph"
-            data-testid="eq-graph-open"
-            aria-label="Open EQ graph"
-            onClick={() => setEqOpen(true)}
-          >
-            <GraphIcon />
-          </button>
-        ) : null}
-        {onSaveFavorite ? (
-          <button
-            type="button"
-            className="inspector-fav"
-            data-testid="save-favorite"
-            aria-label="Save as favorite"
+            className="inspector-more"
+            data-testid="inspector-actions"
+            aria-label="Block actions"
+            aria-haspopup="true"
+            aria-expanded={actionsOpen}
             onClick={() => {
-              setFavName(node.title);
-              setFavOpen(true);
+              setFavOpen(false);
+              setClearOpen(false);
+              setActionsOpen((v) => !v);
             }}
           >
-            <StarIcon />
-          </button>
-        ) : null}
-        {onClear ? (
-          <button
-            type="button"
-            className="inspector-clear"
-            data-testid="clear-block"
-            aria-label="Remove block"
-            onClick={() => void onClear()}
-          >
-            <TrashIcon />
+            <MoreIcon />
           </button>
         ) : null}
       </div>
+      {actionsOpen && hasActions ? (
+        <div className="inspector-actions" data-testid="inspector-actions-menu">
+          {canGraph ? (
+            <button
+              type="button"
+              className="inspector-action"
+              data-testid="eq-graph-open"
+              onClick={() => {
+                setActionsOpen(false);
+                setEqOpen(true);
+              }}
+            >
+              <GraphIcon />
+              EQ graph
+            </button>
+          ) : null}
+          {onSaveFavorite ? (
+            <button
+              type="button"
+              className="inspector-action"
+              data-testid="save-favorite"
+              onClick={() => {
+                setActionsOpen(false);
+                setFavName(node.title);
+                setFavOpen(true);
+              }}
+            >
+              <StarIcon />
+              Save as favorite
+            </button>
+          ) : null}
+          {onClear ? (
+            <button
+              type="button"
+              className="inspector-action danger"
+              data-testid="clear-block"
+              onClick={() => {
+                setActionsOpen(false);
+                setClearOpen(true);
+              }}
+            >
+              <TrashIcon />
+              Remove block
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {clearOpen && onClear ? (
+        <div className="fav-save" data-testid="clear-block-form">
+          <p className="hint">Remove {node.title} from this slot?</p>
+          <div className="fav-save-actions">
+            <button type="button" className="fav-save-cancel" onClick={() => setClearOpen(false)}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="fav-save-ok danger"
+              data-testid="clear-block-confirm"
+              onClick={() => {
+                void Promise.resolve(onClear()).finally(() => {
+                  setClearOpen(false);
+                });
+              }}
+            >
+              Remove
+            </button>
+          </div>
+        </div>
+      ) : null}
       {favOpen && onSaveFavorite ? (
         <form
           className="fav-save"
