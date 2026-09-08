@@ -25,7 +25,12 @@ OPS = [
     "events",
     "list_setlists",
     "list_irs",
+    "list_favorites",
     "list_models",
+    "apply_favorite",
+    "save_favorite",
+    "rename_favorite",
+    "delete_favorite",
     "move_block",
     "set_model",
     "clear_block",
@@ -190,6 +195,56 @@ def handle_command(raw: bytes) -> dict:
 
     if op == "list_irs":
         return run_usb({"op": op}, timeout=20.0)
+
+    if op == "list_favorites":
+        return run_usb({"op": op}, timeout=20.0)
+
+    if op == "apply_favorite":
+        block = _parse_int(cmd.get("block"), 0, 39)
+        index = _parse_int(cmd.get("index"), 0, 127)
+        if block is None:
+            return {"ok": False, "op": op, "error": "block must be an integer 0-39"}
+        if block % 20 in (0, 9, 10, 19):
+            return {"ok": False, "op": op, "error": "cannot change input, output, split, or merge"}
+        if index is None:
+            return {"ok": False, "op": op, "error": "index must be an integer 0-127"}
+        return run_usb({"op": op, "block": block, "index": index}, timeout=20.0)
+
+    if op == "save_favorite":
+        block = _parse_int(cmd.get("block"), 0, 39)
+        if block is None:
+            return {"ok": False, "op": op, "error": "block must be an integer 0-39"}
+        if block % 20 in (0, 9, 10, 19):
+            return {"ok": False, "op": op, "error": "cannot save input, output, split, or merge"}
+        name = cmd.get("name")
+        if not isinstance(name, str) or not name.strip():
+            return {"ok": False, "op": op, "error": "name must be a non-empty string"}
+        if len(name.strip()) > 32:
+            return {"ok": False, "op": op, "error": "name must be 1-32 characters"}
+        body = {"op": op, "block": block, "name": name.strip()}
+        if "index" in cmd:
+            index = _parse_int(cmd.get("index"), 0, 127)
+            if index is None:
+                return {"ok": False, "op": op, "error": "index must be an integer 0-127"}
+            body["index"] = index
+        return run_usb(body, timeout=20.0)
+
+    if op == "rename_favorite":
+        index = _parse_int(cmd.get("index"), 0, 127)
+        if index is None:
+            return {"ok": False, "op": op, "error": "index must be an integer 0-127"}
+        name = cmd.get("name")
+        if not isinstance(name, str) or not name.strip():
+            return {"ok": False, "op": op, "error": "name must be a non-empty string"}
+        if len(name.strip()) > 32:
+            return {"ok": False, "op": op, "error": "name must be 1-32 characters"}
+        return run_usb({"op": op, "index": index, "name": name.strip()}, timeout=20.0)
+
+    if op == "delete_favorite":
+        index = _parse_int(cmd.get("index"), 0, 127)
+        if index is None:
+            return {"ok": False, "op": op, "error": "index must be an integer 0-127"}
+        return run_usb({"op": op, "index": index}, timeout=20.0)
 
     if op == "select_snapshot":
         index = _parse_int(cmd.get("index"), 0, 7)

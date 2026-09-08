@@ -45,6 +45,11 @@ Reassemble `payload[offset:offset+len]` until the last-chunk bit is set, then `j
 {"op":"select_snapshot","index":0}
 {"op":"move_block","from":7,"to":8}
 {"op":"list_models"}
+{"op":"list_favorites"}
+{"op":"apply_favorite","block":3,"index":0}
+{"op":"save_favorite","block":3,"name":"My Drive"}
+{"op":"rename_favorite","index":0,"name":"My Drive 2"}
+{"op":"delete_favorite","index":0}
 {"op":"set_model","block":3,"model_id":"HD2_DistKinkyBoost"}
 {"op":"set_model","block":4,"model_id":"HD2_AmpEssexA30","pair":true}
 {"op":"clear_block","block":8}
@@ -84,7 +89,9 @@ Reassemble `payload[offset:offset+len]` until the last-chunk bit is set, then `j
 
 `list_irs` reads impulse-response slots stored on the device (opcode 13 on the control channel). Reply: `{"ok":true,"op":"list_irs","irs":[{"index":0,"name":"Essex Cab"}, ...]}`. `index` is the 0-based slot. Empty slots may be omitted. This is a directory listing only; it does not transfer IR files. IR Select on a block is 1-based (1-128): list index 0 is IR 1.
 
-`list_models` returns the HX Edit effect categories (with shelves and model ids) from the catalog. It does not talk to the Helix. Favourites are not in this list. Each model may include `load` and `load_stereo` (HX Edit DSP percent). The GUI uses those plus each `get_state` block's `load` to dim models that do not fit the remaining path budget. A replace credits the current block. The device can still refuse with **-306**.
+`list_models` returns the HX Edit effect categories (with shelves and model ids) from the catalog. It does not talk to the Helix. The catalog's empty Favorites category is omitted. Each model may include `load` and `load_stereo` (HX Edit DSP percent). The GUI uses those plus each `get_state` block's `load` to dim models that do not fit the remaining path budget. A replace credits the current block. The device can still refuse with **-306**.
+
+`list_favorites` reads the Helix Favorite-block shelf (opcode 112). Reply: `{"ok":true,"op":"list_favorites","favorites":[{"index":0,"name":"My Drive","model":12,"model_id":"HD2_DistKinkyBoost",...}]}`. Empty when the device holds none. `apply_favorite` places one onto a chain slot (`{"block":3,"index":0}`): opcode 113 for the record, then `set_model` / `set_model_pair` and typed parameter writes. Input, output, split, and merge are refused. `save_favorite` keeps the current chain slot as a Favorite (`{"block":3,"name":"My Drive"}`). Omit `index` to use the first free slot 0–127. Occupied indexes are refused. `rename_favorite` takes `"index"` and `"name"` (opcode 117). `delete_favorite` takes `"index"` (opcode 116). Both refuse an empty slot.
 
 If the Helix is powered off, JSON ops that need USB reply `{"ok":false,"error":"helix not connected"}`. The USB daemon stays up and opens a new session when the Floor enumerates again.
 

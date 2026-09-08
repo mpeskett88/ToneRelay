@@ -57,6 +57,17 @@ impl Switch {
     }
 }
 
+/// One favourite the device lists (op 112): index, name, and the models it holds.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FavouriteEntry {
+    pub index: i64,
+    pub name: String,
+    /// Helix.sym number of the block's model.
+    pub model: i64,
+    /// Helix.sym number of the paired cab, when the favourite is an amp with one.
+    pub paired_cab: Option<i64>,
+}
+
 /// One thing a footswitch controls.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Carried {
@@ -86,6 +97,27 @@ fn carried(item: &Value) -> Option<Carried> {
             .get(rpc::key::ENABLED)
             .and_then(Value::as_bool)
             .unwrap_or(true),
+    })
+}
+
+fn favourite_cab(value: Option<&Value>) -> Option<i64> {
+    let n = value.and_then(Value::as_i64)?;
+    if n < 0 || n == 65535 {
+        None
+    } else {
+        Some(n)
+    }
+}
+
+fn favourite_entry(entry: &Value) -> Option<FavouriteEntry> {
+    Some(FavouriteEntry {
+        index: entry.get(rpc::key::OBJECT_ID)?.as_i64()?,
+        name: entry.get(rpc::key::NAME)?.as_str()?.to_owned(),
+        model: entry
+            .get(rpc::key::FAVOURITE_MODEL)
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+        paired_cab: favourite_cab(entry.get(rpc::key::FAVOURITE_CAB)),
     })
 }
 
@@ -219,26 +251,29 @@ impl Session {
         Ok(())
     }
 
-    /// The device's favourite blocks, as `(index, name)`.
+    /// The device's favourite blocks.
     ///
     /// A favourite is a block kept with its settings so it can be dropped into
     /// any preset - the editor's own shelf, living on the pedal rather than in
     /// this program. Distinct from TonePush's favourite *presets*, which are
     /// a local file.
-    pub fn favourites(&mut self) -> Result<Vec<(i64, String)>> {
+    pub fn favourites(&mut self) -> Result<Vec<FavouriteEntry>> {
         let result = self.request(ChannelId::DATA, rpc::op::LIST_FAVOURITES, Value::Nil)?;
         let Value::Array(entries) = result else {
             return Ok(Vec::new());
         };
-        Ok(entries
-            .iter()
-            .filter_map(|e| {
-                Some((
-                    e.get(rpc::key::OBJECT_ID)?.as_i64()?,
-                    e.get(rpc::key::NAME)?.as_str()?.to_owned(),
-                ))
-            })
-            .collect())
+        Ok(entries.iter().filter_map(favourite_entry).collect())
+    }
+
+    /// One favourite's stored record (op 113): the model, cab, and values.
+    pub fn fetch_favourite(&mut self, index: i64) -> Result<Value> {
+        self.request(
+            ChannelId::DATA,
+            rpc::op::FETCH_FAVOURITE,
+            hx_proto::msgmap! {
+                rpc::key::OBJECT_ID => Value::Int(index),
+            },
+        )
     }
 
     /// Keep a block as a favourite, under a name.

@@ -914,8 +914,8 @@ fn favourites_can_be_listed_kept_and_forgotten() {
     };
 
     // Somewhere free to put it, so nothing of Carmine's is overwritten.
-    let taken: Vec<i64> = before.iter().map(|(i, _)| *i).collect();
-    let Some(slot) = (0..16).find(|i| !taken.contains(i)) else {
+    let taken: Vec<i64> = before.iter().map(|e| e.index).collect();
+    let Some(slot) = (0..128).find(|i| !taken.contains(i)) else {
         eprintln!("SKIPPED: every favourite slot is in use");
         return;
     };
@@ -926,14 +926,14 @@ fn favourites_can_be_listed_kept_and_forgotten() {
     assert!(
         after
             .iter()
-            .any(|(i, n)| *i == slot && n == "TONEPUSH TEST"),
+            .any(|e| e.index == slot && e.name == "TONEPUSH TEST"),
         "the favourite should be listed: {after:?}"
     );
 
     s.clear_favourite(slot).expect("forgetting it again");
     let ended = s.favourites().expect("listing once more");
     assert!(
-        !ended.iter().any(|(i, _)| *i == slot),
+        !ended.iter().any(|e| e.index == slot),
         "the slot should be free again: {ended:?}"
     );
     assert_control_healthy(&mut s, "favourites");

@@ -1115,6 +1115,129 @@ button.inspector-graph:active {
   background: var(--accent-muted);
 }
 
+button.inspector-fav {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  min-width: 3rem;
+  min-height: var(--touch);
+  padding: 0;
+  background: var(--bg-elevated-2);
+  color: #e8b84a;
+  border: 1px solid #e8b84a40;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+button.inspector-fav:active {
+  background: #e8b84a22;
+}
+
+.fav-save {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0 0 0.75rem;
+  padding: 0.75rem;
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.fav-save-label {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.fav-save-input {
+  width: 100%;
+  min-height: var(--touch);
+  padding: 0 0.75rem;
+  font: inherit;
+  font-size: 1rem;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.fav-save-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.fav-save-cancel,
+.fav-save-ok {
+  min-height: var(--touch);
+  font: inherit;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.fav-save-cancel {
+  color: var(--text);
+  background: var(--bg-elevated-2);
+  border: 1px solid var(--line);
+}
+
+.fav-save-ok {
+  color: #1a1408;
+  background: #e8b84a;
+  border: 1px solid #e8b84a;
+}
+
+.fav-save-ok:disabled {
+  opacity: 0.45;
+}
+
+.fav-save-ok.danger {
+  color: #1a0a0e;
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+.fav-row {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.fav-row .preset-row {
+  gap: var(--space-2);
+}
+
+.fav-row .preset > span:first-child {
+  width: 2rem;
+}
+
+.fav-cat-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--radius);
+}
+
+.fav-cat-mark .cat-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.fav-row .inspector-fav,
+.fav-row .inspector-clear {
+  align-self: center;
+}
+
+.pencil-icon {
+  display: block;
+}
+
 .graph-icon {
   display: block;
 }

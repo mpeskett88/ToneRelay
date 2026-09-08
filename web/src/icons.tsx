@@ -134,6 +134,26 @@ export function CategoryIcon({ category }: { category: BlockCategory }) {
   }
 }
 
+export function StarIcon() {
+  return (
+    <Svg>
+      <path
+        d="M12 3.6l2.4 4.9 5.4.8-3.9 3.8.9 5.4L12 16.2 7.2 18.5l.9-5.4L4.2 9.3l5.4-.8z"
+        {...stroke}
+      />
+    </Svg>
+  );
+}
+
+export function PencilIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden className="pencil-icon">
+      <path d="M14.5 5.5l4 4L8 20H4v-4z" {...stroke} />
+      <path d="M12.5 7.5l4 4" {...stroke} />
+    </svg>
+  );
+}
+
 export function TrashIcon() {
   return (
     <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden className="trash-icon">

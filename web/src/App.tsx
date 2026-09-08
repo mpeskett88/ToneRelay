@@ -34,6 +34,7 @@ import {
   dspRefuseMessage,
   hxCategoryKind,
   modelFits,
+  type FavoriteRow,
   type ModelCategory,
   type ModelShelf,
 } from "./catalog";
@@ -53,7 +54,7 @@ import {
 } from "./chain";
 import EqGraph from "./EqGraph";
 import { isParametricEq } from "./eqCurve";
-import { CategoryIcon, ExportIcon, GraphIcon, TrashIcon } from "./icons";
+import { CategoryIcon, ExportIcon, GraphIcon, PencilIcon, StarIcon, TrashIcon } from "./icons";
 
 const catalog = rawCatalog as unknown as Catalog;
 
@@ -904,6 +905,7 @@ function Editor({
   const [activeId, setActiveId] = useState<string | null>(null);
   const [emptySlot, setEmptySlot] = useState<number | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [favorites, setFavorites] = useState<FavoriteRow[]>([]);
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const [dropHover, setDropHover] = useState<number | null>(null);
   const [ghost, setGhost] = useState<DragGhost | null>(null);
@@ -930,6 +932,48 @@ function Editor({
     }
     setActiveId(allNodes[0]?.id ?? null);
   }, [allNodes, activeId, emptySlot]);
+
+  useEffect(() => {
+    if (!pickerOpen) {
+      return;
+    }
+    let on = true;
+    void client
+      .request({ op: "list_favorites" })
+      .then((r) => {
+        if (on) {
+          setFavorites((r.favorites as FavoriteRow[]) ?? []);
+        }
+      })
+      .catch(() => {
+        if (on) {
+          setFavorites([]);
+        }
+      });
+    return () => {
+      on = false;
+    };
+  }, [pickerOpen, client]);
+
+  const pickerCats = useMemo(() => {
+    if (favorites.length === 0) {
+      return modelCats;
+    }
+    const favCat: ModelCategory = {
+      id: 23,
+      name: "Favorites",
+      paired: false,
+      models: favorites.map((f) => ({
+        id: f.model_id ?? `fav:${f.index}`,
+        name: f.name,
+        load: f.load,
+        load_stereo: f.load_stereo,
+        favorite: f.index,
+        category: f.category,
+      })),
+    };
+    return [favCat, ...modelCats];
+  }, [favorites, modelCats]);
 
   function selectNode(id: string) {
     setEmptySlot(null);
@@ -1280,6 +1324,18 @@ function Editor({
                   }
                 : undefined
             }
+            onSaveFavorite={
+              !inspect.id.startsWith("empty:") && canPickModel(inspect.category)
+                ? async (name: string) => {
+                    const dump = inspect.dumps[0];
+                    if (dump == null) {
+                      return;
+                    }
+                    await client.request({ op: "save_favorite", block: dump.block, name });
+                    setFavorites([]);
+                  }
+                : undefined
+            }
           />
         ) : (
           <p className="hint">Select a block on the path.</p>
@@ -1290,21 +1346,30 @@ function Editor({
           key={inspect.id}
           node={inspect}
           blocks={blocks}
-          categories={modelCats}
+          categories={pickerCats}
+          setError={setError}
           onClose={() => setPickerOpen(false)}
-          onChoose={async (modelId, paired, stereo) => {
+          onChoose={async (modelId, paired, stereo, favorite) => {
             const dump = inspect.dumps[0];
             if (dump == null) {
               return;
             }
             try {
-              await client.request({
-                op: "set_model",
-                block: dump.block,
-                model_id: modelId,
-                ...(paired ? { pair: true } : {}),
-                ...(stereo === undefined ? {} : { stereo }),
-              });
+              if (typeof favorite === "number") {
+                await client.request({
+                  op: "apply_favorite",
+                  block: dump.block,
+                  index: favorite,
+                });
+              } else {
+                await client.request({
+                  op: "set_model",
+                  block: dump.block,
+                  model_id: modelId,
+                  ...(paired ? { pair: true } : {}),
+                  ...(stereo === undefined ? {} : { stereo }),
+                });
+              }
               const state = await client.request({ op: "get_state" });
               const next = (state.blocks as DumpBlock[]) ?? [];
               setBlocks(next);
@@ -1319,6 +1384,16 @@ function Editor({
               const msg = err instanceof Error ? err.message : String(err);
               setError(dspRefuseMessage(msg));
             }
+          }}
+          onRenameFavorite={async (index, name) => {
+            await client.request({ op: "rename_favorite", index, name });
+            setFavorites((rows) => rows.map((r) => (r.index === index ? { ...r, name } : r)));
+            setError(null);
+          }}
+          onDeleteFavorite={async (index) => {
+            await client.request({ op: "delete_favorite", index });
+            setFavorites((rows) => rows.filter((r) => r.index !== index));
+            setError(null);
           }}
         />
       )}
@@ -1709,29 +1784,67 @@ function ModelSheet({
   node,
   blocks,
   categories,
+  setError,
   onClose,
   onChoose,
+  onRenameFavorite,
+  onDeleteFavorite,
 }: {
   node: ChainNode;
   blocks: DumpBlock[];
   categories: ModelCategory[];
+  setError: (msg: string | null) => void;
   onClose: () => void;
-  onChoose: (modelId: string, paired: boolean, stereo?: boolean) => Promise<void>;
+  onChoose: (modelId: string, paired: boolean, stereo?: boolean, favorite?: number) => Promise<void>;
+  onRenameFavorite: (index: number, name: string) => Promise<void>;
+  onDeleteFavorite: (index: number) => Promise<void>;
 }) {
   const [openCat, setOpenCat] = useState<ModelCategory | null>(null);
   const [openShelf, setOpenShelf] = useState<ModelShelf | null>(null);
   const [busy, setBusy] = useState(false);
+  const [favEdit, setFavEdit] = useState<{
+    index: number;
+    name: string;
+    mode: "rename" | "delete";
+    draft: string;
+  } | null>(null);
   const currentId = node.dumps[0]?.model_id ?? node.model;
-  const shelves = (openCat?.shelves ?? []).filter((s) => s.models.length > 0);
-  const showingShelves = openCat != null && openShelf == null && shelves.length > 0;
-  const models = openShelf?.models ?? openCat?.models ?? [];
-  const title = openShelf?.name ?? openCat?.name ?? "Model";
+  const liveCat = openCat == null ? null : (categories.find((c) => c.id === openCat.id) ?? openCat);
+  const shelves = (liveCat?.shelves ?? []).filter((s) => s.models.length > 0);
+  const showingShelves = liveCat != null && openShelf == null && shelves.length > 0;
+  const models = openShelf?.models ?? liveCat?.models ?? [];
+  const title = openShelf?.name ?? liveCat?.name ?? "Model";
   const shelfStereo =
     openShelf?.name === "Stereo" ? true : openShelf?.name === "Mono" ? false : undefined;
   const headroom = dspHeadroom(blocks, node.dumps);
   const freePct = Math.max(0, Math.min(100, Math.round(headroom)));
 
+  useEffect(() => {
+    if (favEdit == null) {
+      return;
+    }
+    const testId =
+      favEdit.mode === "rename" ? `fav-rename-form-${favEdit.index}` : `fav-delete-form-${favEdit.index}`;
+    document.querySelector(`[data-testid="${testId}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [favEdit]);
+
+  useEffect(() => {
+    if (openCat == null) {
+      return;
+    }
+    const next = categories.find((c) => c.id === openCat.id);
+    if (next == null) {
+      setOpenCat(null);
+      setOpenShelf(null);
+      setFavEdit(null);
+    }
+  }, [categories, openCat]);
+
   function goBack() {
+    if (favEdit) {
+      setFavEdit(null);
+      return;
+    }
     if (openShelf) {
       setOpenShelf(null);
       return;
@@ -1739,13 +1852,47 @@ function ModelSheet({
     setOpenCat(null);
   }
 
-  async function pick(modelId: string, paired: boolean, stereo?: boolean) {
+  async function pick(modelId: string, paired: boolean, stereo?: boolean, favorite?: number) {
     if (busy) {
       return;
     }
     setBusy(true);
     try {
-      await onChoose(modelId, paired, stereo);
+      await onChoose(modelId, paired, stereo, favorite);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function renameFavorite() {
+    if (favEdit == null || busy) {
+      return;
+    }
+    const name = favEdit.draft.trim();
+    if (!name) {
+      return;
+    }
+    setBusy(true);
+    try {
+      await onRenameFavorite(favEdit.index, name);
+      setFavEdit(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteFavorite() {
+    if (favEdit == null || busy) {
+      return;
+    }
+    setBusy(true);
+    try {
+      await onDeleteFavorite(favEdit.index);
+      setFavEdit(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
@@ -1784,7 +1931,7 @@ function ModelSheet({
             categories.map((cat) => {
               const kind = hxCategoryKind(cat.name);
               const paint = categoryPaint(kind);
-              const fill = cat.colour || paint.bg;
+              const fill = cat.id === 23 ? "#e8b84a" : cat.colour || paint.bg;
               const current = cat.name.toLowerCase() === categoryTitle(node.category).toLowerCase();
               return (
                 <button
@@ -1795,10 +1942,14 @@ function ModelSheet({
                   onClick={() => {
                     setOpenCat(cat);
                     setOpenShelf(null);
+                    setFavEdit(null);
                   }}
                 >
-                  <span className="inspector-mark model-cat-mark" style={{ backgroundColor: fill, color: paint.fg }}>
-                    <CategoryIcon category={kind} />
+                  <span
+                    className="inspector-mark model-cat-mark"
+                    style={{ backgroundColor: fill, color: cat.id === 23 ? "#1a1408" : paint.fg }}
+                  >
+                    {cat.id === 23 ? <StarIcon /> : <CategoryIcon category={kind} />}
                   </span>
                   <span>{cat.name}</span>
                 </button>
@@ -1817,13 +1968,135 @@ function ModelSheet({
                 <span>{shelf.name}</span>
               </button>
             ))}
-          {openCat != null &&
+          {liveCat != null &&
             !showingShelves &&
             models.map((m) => {
               const current =
+                m.favorite == null &&
                 m.id === currentId &&
                 (shelfStereo === undefined || node.stereo === shelfStereo);
               const tight = !current && !modelFits(m, headroom, shelfStereo);
+              const favIndex = m.favorite;
+              if (favIndex != null) {
+                const editing = favEdit?.index === favIndex;
+                const kind = hxCategoryKind(m.category ?? "fx");
+                const paint = categoryPaint(kind);
+                return (
+                  <div key={`fav:${favIndex}`} className="fav-row">
+                    <div className="preset-row">
+                      <button
+                        type="button"
+                        className={tight ? "preset dsp-tight" : "preset"}
+                        data-testid={`model-fav-${favIndex}`}
+                        disabled={busy}
+                        aria-disabled={tight || busy}
+                        onClick={() => {
+                          if (tight) {
+                            return;
+                          }
+                          void pick(m.id, liveCat.paired, shelfStereo, favIndex);
+                        }}
+                      >
+                        <span
+                          className="fav-cat-mark"
+                          style={{ backgroundColor: paint.bg, color: paint.fg }}
+                          aria-hidden
+                        >
+                          <CategoryIcon category={kind} />
+                        </span>
+                        <span>{m.name}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="inspector-fav"
+                        data-testid={`fav-rename-${favIndex}`}
+                        aria-label={`Rename ${m.name}`}
+                        aria-expanded={editing && favEdit.mode === "rename"}
+                        disabled={busy}
+                        onClick={() => {
+                          setFavEdit(
+                            editing && favEdit.mode === "rename"
+                              ? null
+                              : { index: favIndex, name: m.name, mode: "rename", draft: m.name },
+                          );
+                        }}
+                      >
+                        <PencilIcon />
+                      </button>
+                      <button
+                        type="button"
+                        className="inspector-clear"
+                        data-testid={`fav-delete-${favIndex}`}
+                        aria-label={`Delete ${m.name}`}
+                        aria-expanded={editing && favEdit.mode === "delete"}
+                        disabled={busy}
+                        onClick={() => {
+                          setFavEdit(
+                            editing && favEdit.mode === "delete"
+                              ? null
+                              : { index: favIndex, name: m.name, mode: "delete", draft: m.name },
+                          );
+                        }}
+                      >
+                        <TrashIcon />
+                      </button>
+                    </div>
+                    {editing && favEdit.mode === "rename" && (
+                      <form
+                        className="fav-save"
+                        data-testid={`fav-rename-form-${favIndex}`}
+                        onSubmit={(ev) => {
+                          ev.preventDefault();
+                          void renameFavorite();
+                        }}
+                      >
+                        <label className="fav-save-label">
+                          Favorite name
+                          <input
+                            className="fav-save-input"
+                            value={favEdit.draft}
+                            maxLength={32}
+                            autoComplete="off"
+                            data-testid={`fav-rename-name-${favIndex}`}
+                            onChange={(ev) => setFavEdit({ ...favEdit, draft: ev.target.value })}
+                          />
+                        </label>
+                        <div className="fav-save-actions">
+                          <button type="button" className="fav-save-cancel" onClick={() => setFavEdit(null)}>
+                            Cancel
+                          </button>
+                          <button
+                            type="submit"
+                            className="fav-save-ok"
+                            disabled={busy || favEdit.draft.trim() === ""}
+                          >
+                            Rename
+                          </button>
+                        </div>
+                      </form>
+                    )}
+                    {editing && favEdit.mode === "delete" && (
+                      <div className="fav-save" data-testid={`fav-delete-form-${favIndex}`}>
+                        <p className="hint">Delete {favEdit.name} from the Helix?</p>
+                        <div className="fav-save-actions">
+                          <button type="button" className="fav-save-cancel" onClick={() => setFavEdit(null)}>
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            className="fav-save-ok danger"
+                            data-testid={`fav-delete-confirm-${favIndex}`}
+                            disabled={busy}
+                            onClick={() => void deleteFavorite()}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              }
               return (
                 <button
                   key={m.id}
@@ -1836,7 +2109,7 @@ function ModelSheet({
                     if (tight) {
                       return;
                     }
-                    void pick(m.id, openCat.paired, shelfStereo);
+                    void pick(m.id, liveCat.paired, shelfStereo);
                   }}
                 >
                   <span />
@@ -1858,6 +2131,7 @@ function Inspector({
   setError,
   onOpenPicker,
   onClear,
+  onSaveFavorite,
 }: {
   node: ChainNode;
   client: BridgeClient;
@@ -1866,14 +2140,19 @@ function Inspector({
   setError: (msg: string | null) => void;
   onOpenPicker?: () => void;
   onClear?: () => void | Promise<void>;
+  onSaveFavorite?: (name: string) => void | Promise<void>;
 }) {
   const paint = categoryPaint(node.category);
   const category = categoryTitle(node.category);
   const empty = node.id.startsWith("empty:");
   const eqDump = node.dumps.find((d) => isParametricEq(d.model_id, d.model));
   const [eqOpen, setEqOpen] = useState(false);
+  const [favOpen, setFavOpen] = useState(false);
+  const [favName, setFavName] = useState("");
+  const [favBusy, setFavBusy] = useState(false);
   useEffect(() => {
     setEqOpen(false);
+    setFavOpen(false);
   }, [node.id]);
   const showCategory = !empty && category.toLowerCase() !== node.title.toLowerCase();
   const head = (
@@ -1918,6 +2197,20 @@ function Inspector({
             <GraphIcon />
           </button>
         ) : null}
+        {onSaveFavorite ? (
+          <button
+            type="button"
+            className="inspector-fav"
+            data-testid="save-favorite"
+            aria-label="Save as favorite"
+            onClick={() => {
+              setFavName(node.title);
+              setFavOpen(true);
+            }}
+          >
+            <StarIcon />
+          </button>
+        ) : null}
         {onClear ? (
           <button
             type="button"
@@ -1930,6 +2223,51 @@ function Inspector({
           </button>
         ) : null}
       </div>
+      {favOpen && onSaveFavorite ? (
+        <form
+          className="fav-save"
+          data-testid="save-favorite-form"
+          onSubmit={(ev) => {
+            ev.preventDefault();
+            const name = favName.trim();
+            if (!name || favBusy) {
+              return;
+            }
+            setFavBusy(true);
+            void Promise.resolve(onSaveFavorite(name))
+              .then(() => {
+                setFavOpen(false);
+                setError(null);
+              })
+              .catch((err) => {
+                setError(err instanceof Error ? err.message : String(err));
+              })
+              .finally(() => {
+                setFavBusy(false);
+              });
+          }}
+        >
+          <label className="fav-save-label">
+            Favorite name
+            <input
+              className="fav-save-input"
+              value={favName}
+              maxLength={32}
+              autoComplete="off"
+              data-testid="save-favorite-name"
+              onChange={(ev) => setFavName(ev.target.value)}
+            />
+          </label>
+          <div className="fav-save-actions">
+            <button type="button" className="fav-save-cancel" onClick={() => setFavOpen(false)}>
+              Cancel
+            </button>
+            <button type="submit" className="fav-save-ok" disabled={favBusy || favName.trim() === ""}>
+              Save
+            </button>
+          </div>
+        </form>
+      ) : null}
       {eqOpen && eqDump ? (
         <EqGraph
           dump={eqDump}

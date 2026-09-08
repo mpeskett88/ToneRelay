@@ -71,6 +71,11 @@ class CommandTests(unittest.TestCase):
         self.assertIn("list_setlists", r["ops"])
         self.assertIn("list_irs", r["ops"])
         self.assertIn("list_models", r["ops"])
+        self.assertIn("list_favorites", r["ops"])
+        self.assertIn("apply_favorite", r["ops"])
+        self.assertIn("save_favorite", r["ops"])
+        self.assertIn("rename_favorite", r["ops"])
+        self.assertIn("delete_favorite", r["ops"])
         self.assertIn("select_snapshot", r["ops"])
         self.assertIn("move_block", r["ops"])
         self.assertIn("set_model", r["ops"])
@@ -164,6 +169,96 @@ class NewOpsTests(unittest.TestCase):
             self.assertTrue(r["ok"])
             self.assertEqual(run_usb.call_args[0][0]["op"], "list_models")
             self.assertEqual(r["categories"][0]["name"], "Distortion")
+
+    def test_list_favorites_ok(self):
+        from unittest.mock import patch
+
+        with patch(
+            "protocol.run_usb",
+            return_value={
+                "ok": True,
+                "op": "list_favorites",
+                "favorites": [{"index": 0, "name": "My Drive"}],
+            },
+        ) as run_usb:
+            r = handle_command(b'{"op":"list_favorites"}')
+            self.assertTrue(r["ok"])
+            self.assertEqual(run_usb.call_args[0][0]["op"], "list_favorites")
+            self.assertEqual(r["favorites"][0]["name"], "My Drive")
+
+    def test_apply_favorite_rejects_fixture_and_missing_index(self):
+        r = handle_command(b'{"op":"apply_favorite","block":0,"index":0}')
+        self.assertFalse(r["ok"])
+        self.assertIn("input", r["error"])
+        r = handle_command(b'{"op":"apply_favorite","block":3}')
+        self.assertFalse(r["ok"])
+        self.assertIn("index", r["error"])
+
+    def test_apply_favorite_ok(self):
+        from unittest.mock import patch
+
+        with patch(
+            "protocol.run_usb",
+            return_value={"ok": True, "op": "apply_favorite", "block": 3, "index": 1},
+        ) as run_usb:
+            r = handle_command(b'{"op":"apply_favorite","block":3,"index":1}')
+            self.assertTrue(r["ok"])
+            self.assertEqual(run_usb.call_args[0][0]["index"], 1)
+
+    def test_save_favorite_rejects_empty_name_and_output(self):
+        r = handle_command(b'{"op":"save_favorite","block":9,"name":"Cab"}')
+        self.assertFalse(r["ok"])
+        self.assertIn("output", r["error"])
+        r = handle_command(b'{"op":"save_favorite","block":3,"name":"   "}')
+        self.assertFalse(r["ok"])
+        self.assertIn("name", r["error"])
+
+    def test_save_favorite_ok(self):
+        from unittest.mock import patch
+
+        with patch(
+            "protocol.run_usb",
+            return_value={"ok": True, "op": "save_favorite", "block": 3, "index": 0, "name": "My Drive"},
+        ) as run_usb:
+            r = handle_command(b'{"op":"save_favorite","block":3,"name":" My Drive "}')
+            self.assertTrue(r["ok"])
+            self.assertEqual(run_usb.call_args[0][0]["name"], "My Drive")
+
+    def test_rename_favorite_rejects_empty_name_and_bad_index(self):
+        r = handle_command(b'{"op":"rename_favorite","index":0,"name":"   "}')
+        self.assertFalse(r["ok"])
+        self.assertIn("name", r["error"])
+        r = handle_command(b'{"op":"rename_favorite","name":"Comp"}')
+        self.assertFalse(r["ok"])
+        self.assertIn("index", r["error"])
+
+    def test_rename_favorite_ok(self):
+        from unittest.mock import patch
+
+        with patch(
+            "protocol.run_usb",
+            return_value={"ok": True, "op": "rename_favorite", "index": 3, "name": "CompFav"},
+        ) as run_usb:
+            r = handle_command(b'{"op":"rename_favorite","index":3,"name":" CompFav "}')
+            self.assertTrue(r["ok"])
+            self.assertEqual(run_usb.call_args[0][0]["index"], 3)
+            self.assertEqual(run_usb.call_args[0][0]["name"], "CompFav")
+
+    def test_delete_favorite_rejects_missing_index(self):
+        r = handle_command(b'{"op":"delete_favorite"}')
+        self.assertFalse(r["ok"])
+        self.assertIn("index", r["error"])
+
+    def test_delete_favorite_ok(self):
+        from unittest.mock import patch
+
+        with patch(
+            "protocol.run_usb",
+            return_value={"ok": True, "op": "delete_favorite", "index": 4},
+        ) as run_usb:
+            r = handle_command(b'{"op":"delete_favorite","index":4}')
+            self.assertTrue(r["ok"])
+            self.assertEqual(run_usb.call_args[0][0]["index"], 4)
 
     def test_list_setlists_ok(self):
         from unittest.mock import patch

@@ -63,7 +63,12 @@ export function timeoutFor(op: string): number {
     op === "save_preset" ||
     op === "list_setlists" ||
     op === "list_irs" ||
+    op === "list_favorites" ||
     op === "list_models" ||
+    op === "apply_favorite" ||
+    op === "save_favorite" ||
+    op === "rename_favorite" ||
+    op === "delete_favorite" ||
     op === "set_model" ||
     op === "clear_block" ||
     op === "export_preset" ||

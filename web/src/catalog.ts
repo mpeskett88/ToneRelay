@@ -35,6 +35,21 @@ export type ModelPick = {
   name: string;
   load?: number;
   load_stereo?: number;
+  favorite?: number;
+  category?: string;
+};
+
+export type FavoriteRow = {
+  index: number;
+  name: string;
+  model?: number;
+  model_id?: string;
+  model_name?: string;
+  category?: string;
+  paired?: number;
+  paired_id?: string;
+  load?: number;
+  load_stereo?: number;
 };
 
 export type ModelShelf = {

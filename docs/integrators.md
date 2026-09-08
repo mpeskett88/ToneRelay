@@ -101,7 +101,9 @@ path does not have enough DSP for that model.
 
 These ops exist today: `ping`, `info`, `preset_info`, `list_presets`,
 `select_preset`, `select_snapshot`, `events`, `list_setlists`, `list_irs`,
-`list_models`, `move_block`, `set_model`, `clear_block`, `save_preset`,
+`list_models`, `list_favorites`, `apply_favorite`, `save_favorite`,
+`rename_favorite`, `delete_favorite`,
+`move_block`, `set_model`, `clear_block`, `save_preset`,
 `export_preset`, `import_preset`,
 `set_param`, `get_param`, `get_state`, `set_bool`, `set_int`, `set_bypass`,
 `set_trails`, `set_global`, `set_assign`, `get_assign`, `topology`.

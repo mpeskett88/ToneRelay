@@ -11,6 +11,15 @@ use crate::state::{knobs_json, routing_labels, slot_param, topology_from_preset}
 
 const GLOBAL_IDS: [i64; 2] = [30, 134];
 const HLX_MAX_BYTES: usize = 2 * 1024 * 1024;
+const FAVORITE_SLOTS: i64 = 128;
+const FAVORITE_NAME_MAX: usize = 32;
+const FAV_RECORD: i64 = 64;
+const FAV_BODY: i64 = 20;
+const FAV_IDS: i64 = 24;
+const FAV_BLOCK: i64 = 11;
+const FAV_CAB: i64 = 12;
+const FAV_SYM: i64 = 3;
+const FAV_VALS: i64 = 4;
 
 /// Front-panel changes drained from EVENTS between JSON requests.
 #[derive(Default)]
@@ -21,6 +30,8 @@ pub struct FollowState {
     pub name: Option<String>,
     /// Occupied IR slots from opcode 13. Cached for the USB session.
     pub irs: Option<Vec<(i64, String)>>,
+    /// Device favourite list from opcode 112. Cached for the USB session.
+    pub favorites: Option<Vec<hx_usb::FavouriteEntry>>,
 }
 
 impl FollowState {
@@ -79,6 +90,11 @@ pub fn handle(
         "events" => events(follow),
         "list_setlists" => list_setlists(session),
         "list_irs" => list_irs(session, follow),
+        "list_favorites" => list_favorites(session, catalog, follow),
+        "apply_favorite" => apply_favorite(session, obj, follow),
+        "save_favorite" => save_favorite(session, obj, follow),
+        "rename_favorite" => rename_favorite(session, obj, follow),
+        "delete_favorite" => delete_favorite(session, obj, follow),
         "move_block" => move_block(session, obj, follow),
         "set_model" => set_model(session, catalog, obj, follow),
         "clear_block" => clear_block(session, obj, follow),
@@ -118,7 +134,9 @@ fn info(session: &mut Session, catalog: Option<&Catalog>, follow: &mut FollowSta
         "name": follow.name,
         "ops": [
             "ping", "info", "preset_info", "list_presets", "select_preset",
-            "select_snapshot", "events", "list_setlists", "list_irs", "move_block", "set_model",
+            "select_snapshot", "events", "list_setlists", "list_irs", "list_favorites",
+            "apply_favorite", "save_favorite", "rename_favorite", "delete_favorite",
+            "move_block", "set_model",
             "clear_block", "save_preset", "export_preset", "import_preset",
             "set_param", "get_param", "get_state", "topology",
             "set_bool", "set_int", "set_bypass", "set_trails",
@@ -201,6 +219,286 @@ fn list_irs(session: &mut Session, follow: &mut FollowState) -> Value {
         }
         Err(e) => usb_err("list_irs", e),
     }
+}
+
+fn list_favorites(
+    session: &mut Session,
+    catalog: Option<&Catalog>,
+    follow: &mut FollowState,
+) -> Value {
+    match session.favourites() {
+        Ok(rows) => {
+            follow.favorites = Some(rows.clone());
+            let favorites: Vec<Value> = rows.iter().map(|e| favorite_row(catalog, e)).collect();
+            json!({
+                "ok": true,
+                "op": "list_favorites",
+                "count": favorites.len(),
+                "favorites": favorites,
+            })
+        }
+        Err(e) => usb_err("list_favorites", e),
+    }
+}
+
+fn favorite_row(catalog: Option<&Catalog>, entry: &hx_usb::FavouriteEntry) -> Value {
+    let mut row = json!({
+        "index": entry.index,
+        "name": entry.name,
+        "model": entry.model,
+    });
+    if let Some(cab) = entry.paired_cab {
+        row["paired"] = json!(cab);
+    }
+    let Some(catalog) = catalog else {
+        return row;
+    };
+    if entry.model < 0 {
+        return row;
+    }
+    let Some(model) = catalog.model_number(entry.model as u32) else {
+        return row;
+    };
+    row["model_id"] = json!(model.id);
+    row["model_name"] = json!(model.name);
+    if let Some(cat) = catalog
+        .category_of(&model.id)
+        .and_then(|id| catalog.category(id))
+    {
+        row["category"] = json!(cat.name);
+    }
+    let mut load = model.dsp_load(model.stereo);
+    let mut load_stereo = model.dsp_load(true);
+    if let Some(cab_n) = entry.paired_cab {
+        if cab_n >= 0 {
+            if let Some(cab) = catalog.model_number(cab_n as u32) {
+                row["paired_id"] = json!(cab.id);
+                load += cab.dsp_load(false);
+                load_stereo += cab.dsp_load(false);
+            }
+        }
+    }
+    if load > 0.0 {
+        row["load"] = json!(load);
+    }
+    if load_stereo > 0.0 && (load_stereo - load).abs() > f32::EPSILON {
+        row["load_stereo"] = json!(load_stereo);
+    }
+    row
+}
+
+fn apply_favorite(
+    session: &mut Session,
+    obj: &serde_json::Map<String, Value>,
+    follow: &mut FollowState,
+) -> Value {
+    let Some(block) = parse_i64(obj.get("block"), 0, 39) else {
+        return err("apply_favorite", "block must be an integer 0-39");
+    };
+    if fixture_slot(block) {
+        return err(
+            "apply_favorite",
+            "cannot change input, output, split, or merge",
+        );
+    }
+    let Some(index) = parse_i64(obj.get("index"), 0, FAVORITE_SLOTS - 1) else {
+        return err("apply_favorite", "index must be an integer 0-127");
+    };
+    let reply = match session.fetch_favourite(index) {
+        Ok(v) => v,
+        Err(e) => return usb_err("apply_favorite", e),
+    };
+    let record = reply.get(FAV_RECORD).unwrap_or(&reply);
+    let Some((model, paired_cab)) = favorite_ids(record) else {
+        return err("apply_favorite", "favourite record has no model");
+    };
+    let placed = match paired_cab {
+        Some(cab) => session.set_model_pair(block, model as u32, cab as u32),
+        None => session.set_model(block, model as u32),
+    };
+    if let Err(e) = placed {
+        return usb_err("apply_favorite", e);
+    }
+    let (values, sym_values) = favorite_values(record, FAV_BLOCK).unwrap_or_default();
+    if let Err(e) = write_favorite_values(session, block, 0, &values, sym_values) {
+        return usb_err("apply_favorite", e);
+    }
+    if paired_cab.is_some() {
+        let (cab_values, _) = favorite_values(record, FAV_CAB).unwrap_or_default();
+        if let Err(e) = write_favorite_values(session, block, 1, &cab_values, cab_values.len()) {
+            return usb_err("apply_favorite", e);
+        }
+    }
+    follow.dirty = true;
+    json!({
+        "ok": true,
+        "op": "apply_favorite",
+        "block": block,
+        "index": index,
+        "model": model,
+    })
+}
+
+fn save_favorite(
+    session: &mut Session,
+    obj: &serde_json::Map<String, Value>,
+    follow: &mut FollowState,
+) -> Value {
+    let Some(block) = parse_i64(obj.get("block"), 0, 39) else {
+        return err("save_favorite", "block must be an integer 0-39");
+    };
+    if fixture_slot(block) {
+        return err(
+            "save_favorite",
+            "cannot save input, output, split, or merge",
+        );
+    }
+    let Some(name) = obj.get("name").and_then(Value::as_str).map(str::trim) else {
+        return err("save_favorite", "name must be a non-empty string");
+    };
+    if name.is_empty() || name.len() > FAVORITE_NAME_MAX {
+        return err("save_favorite", "name must be 1-32 characters");
+    }
+    let listed = match session.favourites() {
+        Ok(rows) => rows,
+        Err(e) => return usb_err("save_favorite", e),
+    };
+    let index = if obj.contains_key("index") {
+        match parse_i64(obj.get("index"), 0, FAVORITE_SLOTS - 1) {
+            Some(n) => n,
+            None => return err("save_favorite", "index must be an integer 0-127"),
+        }
+    } else {
+        let taken: Vec<i64> = listed.iter().map(|e| e.index).collect();
+        match (0..FAVORITE_SLOTS).find(|i| !taken.contains(i)) {
+            Some(n) => n,
+            None => return err("save_favorite", "favorites is full"),
+        }
+    };
+    if listed.iter().any(|e| e.index == index) {
+        return err("save_favorite", "index is already in use");
+    }
+    if let Err(e) = session.save_favourite(block, index, name) {
+        return usb_err("save_favorite", e);
+    }
+    follow.favorites = None;
+    follow.dirty = true;
+    json!({
+        "ok": true,
+        "op": "save_favorite",
+        "block": block,
+        "index": index,
+        "name": name,
+    })
+}
+
+fn rename_favorite(
+    session: &mut Session,
+    obj: &serde_json::Map<String, Value>,
+    follow: &mut FollowState,
+) -> Value {
+    let Some(index) = parse_i64(obj.get("index"), 0, FAVORITE_SLOTS - 1) else {
+        return err("rename_favorite", "index must be an integer 0-127");
+    };
+    let Some(name) = obj.get("name").and_then(Value::as_str).map(str::trim) else {
+        return err("rename_favorite", "name must be a non-empty string");
+    };
+    if name.is_empty() || name.len() > FAVORITE_NAME_MAX {
+        return err("rename_favorite", "name must be 1-32 characters");
+    }
+    let listed = match session.favourites() {
+        Ok(rows) => rows,
+        Err(e) => return usb_err("rename_favorite", e),
+    };
+    if !listed.iter().any(|e| e.index == index) {
+        return err("rename_favorite", "no favorite at that index");
+    }
+    if let Err(e) = session.rename_favourite(index, name) {
+        return usb_err("rename_favorite", e);
+    }
+    follow.favorites = None;
+    json!({
+        "ok": true,
+        "op": "rename_favorite",
+        "index": index,
+        "name": name,
+    })
+}
+
+fn delete_favorite(
+    session: &mut Session,
+    obj: &serde_json::Map<String, Value>,
+    follow: &mut FollowState,
+) -> Value {
+    let Some(index) = parse_i64(obj.get("index"), 0, FAVORITE_SLOTS - 1) else {
+        return err("delete_favorite", "index must be an integer 0-127");
+    };
+    let listed = match session.favourites() {
+        Ok(rows) => rows,
+        Err(e) => return usb_err("delete_favorite", e),
+    };
+    if !listed.iter().any(|e| e.index == index) {
+        return err("delete_favorite", "no favorite at that index");
+    }
+    if let Err(e) = session.clear_favourite(index) {
+        return usb_err("delete_favorite", e);
+    }
+    follow.favorites = None;
+    json!({
+        "ok": true,
+        "op": "delete_favorite",
+        "index": index,
+    })
+}
+
+fn favorite_ids(record: &HxValue) -> Option<(i64, Option<i64>)> {
+    let ids = record.get(FAV_BODY)?.get(FAV_IDS)?;
+    let model = ids.get(rpc::key::MODEL)?.as_i64()?;
+    if model < 0 {
+        return None;
+    }
+    let cab = ids.get(rpc::key::PAIRED_MODEL).and_then(HxValue::as_i64);
+    let paired = match cab {
+        Some(n) if n >= 0 && n != 65535 => Some(n),
+        _ => None,
+    };
+    Some((model, paired))
+}
+
+fn favorite_values(record: &HxValue, key: i64) -> Option<(Vec<HxValue>, usize)> {
+    let list = record.get(FAV_BODY)?.get(key)?;
+    let sym = list.get(FAV_SYM).and_then(HxValue::as_i64).unwrap_or(0) as usize;
+    let HxValue::Array(vals) = list.get(FAV_VALS)? else {
+        return None;
+    };
+    Some((vals.clone(), sym))
+}
+
+fn favorite_wire(v: &HxValue) -> Option<HxValue> {
+    match v {
+        HxValue::Bool(b) => Some(HxValue::Bool(*b)),
+        HxValue::Int(i) | HxValue::WideInt(i, _) => Some(HxValue::Int(*i)),
+        HxValue::UInt(u) | HxValue::Wide(u, _) => Some(HxValue::Int(i64::try_from(*u).ok()?)),
+        HxValue::F32(f) => Some(HxValue::F32(*f)),
+        HxValue::F64(f) => Some(HxValue::F32(*f as f32)),
+        _ => None,
+    }
+}
+
+fn write_favorite_values(
+    session: &mut Session,
+    block: i64,
+    path: i64,
+    values: &[HxValue],
+    limit: usize,
+) -> Result<(), hx_usb::Error> {
+    for (i, v) in values.iter().take(limit).enumerate() {
+        let Some(wire) = favorite_wire(v) else {
+            continue;
+        };
+        write_param(session, block, i as i64, path, wire, true)?;
+    }
+    Ok(())
 }
 
 fn list_presets(
@@ -1362,6 +1660,65 @@ mod tests {
         assert_eq!(rpc::key::IR_SLOT, 112);
         assert_eq!(rpc::key::NAME, 109);
         assert_eq!(rpc::key::ARGS, 101);
+    }
+
+    #[test]
+    fn favorites_opcodes_and_keys() {
+        assert_eq!(rpc::op::LIST_FAVOURITES, 112);
+        assert_eq!(rpc::op::FETCH_FAVOURITE, 113);
+        assert_eq!(rpc::op::SAVE_FAVOURITE, 119);
+        assert_eq!(rpc::key::FAVOURITE_MODEL, 64);
+        assert_eq!(rpc::key::FAVOURITE_CAB, 105);
+        assert_eq!(rpc::key::FAVOURITE_FLAG, 31);
+        assert_eq!(rpc::key::OBJECT_ID, 118);
+    }
+
+    #[test]
+    fn favorite_record_reads_model_cab_and_sym_values() {
+        use super::{favorite_ids, favorite_values, favorite_wire, FAV_BLOCK, FAV_CAB};
+        use hx_proto::msgpack::Value as HxValue;
+        let record = hx_proto::msgmap! {
+            20 => hx_proto::msgmap! {
+                24 => hx_proto::msgmap! {
+                    23 => HxValue::Bool(true),
+                    25 => HxValue::Int(591),
+                    26 => HxValue::Int(709),
+                },
+                11 => hx_proto::msgmap! {
+                    2 => HxValue::Int(2),
+                    3 => HxValue::Int(1),
+                    4 => HxValue::Array(vec![HxValue::F32(0.41), HxValue::Bool(true)]),
+                },
+                12 => hx_proto::msgmap! {
+                    2 => HxValue::Int(1),
+                    3 => HxValue::Int(1),
+                    4 => HxValue::Array(vec![HxValue::Int(2)]),
+                },
+            },
+        };
+        assert_eq!(favorite_ids(&record), Some((591, Some(709))));
+        let (values, sym) = favorite_values(&record, FAV_BLOCK).expect("block values");
+        assert_eq!(sym, 1);
+        assert_eq!(values.len(), 2);
+        assert!(matches!(favorite_wire(&values[0]), Some(HxValue::F32(_))));
+        let (cab, cab_sym) = favorite_values(&record, FAV_CAB).expect("cab values");
+        assert_eq!(cab_sym, 1);
+        assert!(matches!(favorite_wire(&cab[0]), Some(HxValue::Int(2))));
+    }
+
+    #[test]
+    fn favorite_ids_treats_missing_cab_as_none() {
+        use super::favorite_ids;
+        use hx_proto::msgpack::Value as HxValue;
+        let record = hx_proto::msgmap! {
+            20 => hx_proto::msgmap! {
+                24 => hx_proto::msgmap! {
+                    25 => HxValue::Int(636),
+                    26 => HxValue::Int(-1),
+                },
+            },
+        };
+        assert_eq!(favorite_ids(&record), Some((636, None)));
     }
 
     #[test]

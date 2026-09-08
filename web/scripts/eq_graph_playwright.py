@@ -31,6 +31,7 @@ MOCK_WS = r"""
       return { ...base, presets: [{ index: 0, name: "EQ Test" }], setlist: 0, index: 0 };
     }
     if (cmd.op === "list_models") return { ...base, categories: [] };
+    if (cmd.op === "list_favorites") return { ...base, favorites: [] };
     if (cmd.op === "events") return { ...base, dirty: false };
     if (cmd.op === "set_param") {
       const i = cmd.param;

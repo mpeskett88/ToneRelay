@@ -36,6 +36,12 @@ pub mod key {
     /// Rides with a favourite write, always true in every capture of one.
     /// **[inferred]** - its meaning is unknown, it is replayed as observed.
     pub const FAVOURITE_FLAG: i64 = 31;
+    /// Helix.sym model number on a favourite list row (op 112), and the record
+    /// wrapper on an op-113 reply.
+    pub const FAVOURITE_MODEL: i64 = 64;
+    /// Paired cab Helix.sym number on a favourite list row, or 65535 / -1 for
+    /// none. Same integer as [`EVENT`] at message top level; this is a list entry.
+    pub const FAVOURITE_CAB: i64 = 105;
     pub const VALUE: i64 = 119;
     /// Slot position in the signal chain.
     pub const BLOCK: i64 = 98;
