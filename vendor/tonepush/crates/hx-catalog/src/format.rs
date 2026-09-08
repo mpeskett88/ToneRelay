@@ -5,9 +5,47 @@
 //! small formatting language: an optional scale, then either a printf pattern,
 //! a list of labels for a menu, or a set of ranges each with its own pattern.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{Catalog, Kind, Param};
+
+/// Resolved HX Edit formatting for one knob, aliases already followed.
+///
+/// The GUI keeps wire values for reads and writes, and uses this to print
+/// "5.0", "100 %", "28 ms" the way HX Edit does. `HelixControls.json` itself
+/// stays on the host.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct FormatSpec {
+    #[serde(skip_serializing_if = "is_one")]
+    pub scale: f32,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub offset: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub labels: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ranges: Option<Vec<FormatRange>>,
+}
+
+/// One arm of a ranged format: Off below 20 Hz, milliseconds vs seconds, etc.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct FormatRange {
+    pub lower: f32,
+    pub upper: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<String>,
+    #[serde(skip_serializing_if = "is_one")]
+    pub multiplier: f32,
+}
+
+fn is_one(v: &f32) -> bool {
+    (*v - 1.0).abs() <= f32::EPSILON
+}
+
+fn is_zero(v: &f32) -> bool {
+    v.abs() <= f32::EPSILON
+}
 
 /// How one family of parameters is displayed.
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -118,6 +156,42 @@ impl Display {
         match &self.format {
             Some(Pattern::Labels(labels)) => Some(labels),
             _ => None,
+        }
+    }
+
+    /// Flatten this entry (and its alias) into the recipe a client can apply.
+    pub(crate) fn spec(&self, catalog: &Catalog) -> FormatSpec {
+        if let Some(target) = self.alias.as_deref().and_then(|a| catalog.display(a)) {
+            return target.spec(catalog);
+        }
+        FormatSpec {
+            scale: self.scale.unwrap_or(1.0),
+            offset: self.offset.unwrap_or(0.0),
+            pattern: match &self.format {
+                Some(Pattern::Printf(p)) => {
+                    Some(self.format_units.clone().unwrap_or_else(|| p.clone()))
+                }
+                None => self.format_units.clone(),
+                _ => None,
+            },
+            labels: match &self.format {
+                Some(Pattern::Labels(labels)) => Some(labels.clone()),
+                _ => None,
+            },
+            ranges: match &self.format {
+                Some(Pattern::Ranges(ranges)) => Some(
+                    ranges
+                        .iter()
+                        .map(|r| FormatRange {
+                            lower: r.lower,
+                            upper: r.upper,
+                            pattern: r.format_units.clone().or_else(|| r.format.clone()),
+                            multiplier: r.multiplier.unwrap_or(1.0),
+                        })
+                        .collect(),
+                ),
+                _ => None,
+            },
         }
     }
 }
@@ -240,5 +314,22 @@ mod tests {
         assert!(catalog.choices(heel).is_none());
         assert_eq!(catalog.format(heel, -12.0), "-12");
         assert_eq!(catalog.format(heel, 12.0), "+12");
+
+        let mix_spec = catalog.format_spec(mix).expect("Mix displayType");
+        assert!((mix_spec.scale - 100.0).abs() < f32::EPSILON);
+        assert_eq!(mix_spec.pattern.as_deref(), Some("%.0f %%"));
+
+        let amp = catalog.model("HD2_AmpEssexA30").unwrap();
+        let drive = amp.params.iter().find(|p| p.name == "Drive").unwrap();
+        let drive_spec = catalog.format_spec(drive).expect("Drive displayType");
+        assert!((drive_spec.scale - 10.0).abs() < f32::EPSILON);
+        assert_eq!(drive_spec.pattern.as_deref(), Some("%.1f"));
+
+        let plate = catalog.model("VIC_DynPlate").unwrap();
+        let pre = plate.params.iter().find(|p| p.name == "PreDelay").unwrap();
+        assert_eq!(catalog.format(pre, 0.028), "28 ms");
+        let pre_spec = catalog.format_spec(pre).expect("PreDelay displayType");
+        assert!((pre_spec.scale - 1000.0).abs() < f32::EPSILON);
+        assert!(pre_spec.ranges.as_ref().is_some_and(|r| r.len() >= 2));
     }
 }

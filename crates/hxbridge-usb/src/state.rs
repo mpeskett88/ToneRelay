@@ -120,6 +120,11 @@ pub fn knobs_json(catalog: &Catalog, model_number: u32, values: &[f32]) -> Vec<V
             if let Some(display) = &param.display {
                 knob["display"] = json!(display);
             }
+            if let Some(spec) = catalog.format_spec(param) {
+                if let Ok(value) = serde_json::to_value(&spec) {
+                    knob["format"] = value;
+                }
+            }
             if let Some(choices) = catalog.choices(param) {
                 knob["choices"] = json!(choices);
             }
@@ -170,6 +175,20 @@ fn attach_model(
     if !knobs.is_empty() {
         block["knobs"] = json!(knobs);
     }
+    if let Some(trails) = trails_flag(catalog, n, values) {
+        block["trails"] = json!(trails);
+    }
+}
+
+/// Trails is `@trails` in the catalog, not a Helix.sym knob. Delay, reverb, and
+/// FX Loop store it as the extra value after the named array.
+fn trails_flag(catalog: &Catalog, model_number: u32, values: &[f32]) -> Option<bool> {
+    let model = catalog.model_number(model_number)?;
+    if !model.params.iter().any(|p| p.id == "@trails") {
+        return None;
+    }
+    let named = catalog.ordered_params(model).len();
+    Some(values.get(named).is_some_and(|v| *v >= 0.5))
 }
 
 /// Whether this wire number is the stereo firmware symbol of a dual-width model.
@@ -402,6 +421,10 @@ mod tests {
         assert!(knobs[0]["min"].is_number());
         assert!(knobs[0]["max"].is_number());
         assert!(
+            knobs.iter().any(|k| k.get("format").is_some()),
+            "expected at least one HX Edit format recipe: {knobs:?}"
+        );
+        assert!(
             blocks
                 .iter()
                 .any(|b| b["load"].as_f64().unwrap_or(0.0) > 0.0),
@@ -512,6 +535,60 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["Normal", "Higher"]
         );
+    }
+
+    #[test]
+    fn knobs_include_hx_edit_format_recipes_when_catalog_present() {
+        let Some(catalog) = load_lab_catalog() else {
+            return;
+        };
+        let essex = wire_number(&catalog, "HD2_AmpEssexA30").expect("Essex A30 symbol");
+        let knobs = knobs_json(&catalog, essex, &[0.5]);
+        let drive = knobs.iter().find(|k| k["id"] == "Drive").expect("Drive");
+        assert_eq!(drive["format"]["scale"], 10.0);
+        assert_eq!(drive["format"]["pattern"], "%.1f");
+        assert_eq!(drive["label"], "5.0");
+
+        let ir = wire_number(&catalog, "HD2_ImpulseResponse2048").expect("IR 2048 symbol");
+        let knobs = knobs_json(&catalog, ir, &[]);
+        let mix = knobs.iter().find(|k| k["id"] == "Mix").expect("Mix");
+        assert_eq!(mix["format"]["scale"], 100.0);
+        assert_eq!(mix["format"]["pattern"], "%.0f %%");
+        let level = knobs.iter().find(|k| k["id"] == "Level").expect("Level");
+        assert_eq!(level["format"]["pattern"], "%+.1f dB");
+
+        let plate = wire_number(&catalog, "VIC_DynPlate").expect("Dynamic Plate symbol");
+        let knobs = knobs_json(&catalog, plate, &[]);
+        let pre = knobs
+            .iter()
+            .find(|k| k["id"] == "PreDelay")
+            .expect("PreDelay");
+        assert_eq!(pre["format"]["scale"], 1000.0);
+        assert!(pre["format"]["ranges"]
+            .as_array()
+            .is_some_and(|r| !r.is_empty()));
+    }
+
+    #[test]
+    fn trails_comes_from_the_extra_value_on_delay_reverb_and_loop() {
+        let Some(catalog) = load_lab_catalog() else {
+            return;
+        };
+        let plate = wire_number(&catalog, "VIC_DynPlate").expect("Dynamic Plate");
+        let n = knobs_json(&catalog, plate, &[]).len();
+        let mut vals = vec![0.0; n + 1];
+        vals[n] = 1.0;
+        let mut block = json!({});
+        attach_model(&mut block, Some(&catalog), Some(plate), &vals, None);
+        assert_eq!(block["trails"], true);
+        vals[n] = 0.0;
+        attach_model(&mut block, Some(&catalog), Some(plate), &vals, None);
+        assert_eq!(block["trails"], false);
+
+        let amp = wire_number(&catalog, "HD2_AmpEssexA30").expect("Essex A30");
+        let mut amp_block = json!({});
+        attach_model(&mut amp_block, Some(&catalog), Some(amp), &[0.5], None);
+        assert!(amp_block.get("trails").is_none());
     }
 
     #[test]

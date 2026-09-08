@@ -71,7 +71,7 @@ Reassemble `payload[offset:offset+len]` until the last-chunk bit is set, then `j
 
 `subslot` is optional and defaults to `0`. Dual cab / Path 1B I/O use `"subslot":1`.
 
-`get_param` reads the loaded preset document. Reply: `{"ok":true,"op":"get_param","block":4,"param":0,"subslot":0,"value":0.33}`. When the HX Edit catalog is loaded, the reply also has `name`, `min`, `max`, `kind`, and `label`.
+`get_param` reads the loaded preset document. Reply: `{"ok":true,"op":"get_param","block":4,"param":0,"subslot":0,"value":0.33}`. When the HX Edit catalog is loaded, the reply also has `name`, `min`, `max`, `kind`, `label`, and `format` (the scale and printf recipe for the live value).
 
 `set_param` writes a type-30 float (wire value, not the HX Edit label). Essex Drive UI 4.1 is `"float":0.41`. Negative levels use `"float":-6` (JSON number).
 
@@ -81,7 +81,7 @@ Reassemble `payload[offset:offset+len]` until the last-chunk bit is set, then `j
 
 `get_assign` reads the same type-42 list index from the type-24 dump. Path 1A Input is `"block":0`. Path 1A Output is `"block":9`. Path 1B uses `"subslot":1` on USB 10 (input) or 19 (output). Reply: `{"ok":true,"op":"get_assign","block":0,"subslot":0,"value":2}`. When the catalog is loaded the reply also has `label` and `menu`. Dump reads take a few seconds.
 
-`get_state` and `topology` read the loaded preset. Both replies include `blocks`, `paths`, and `snapshots`. `get_state` also includes `snapshot` (0-based current snapshot) and `{setlist, index, name}` from opcode 23. When the catalog is present, each block also has `model_id`, `model_name`, `category`, and `knobs`, plus `"stereo"` when the firmware has both a mono and a stereo symbol for that model. I/O blocks may include `assign_label` and `assign_menu`. IR Select knobs replace the catalog dashes with names from `list_irs`. The web GUI draws a slot grid; `paths` only decides parked vs live split.
+`get_state` and `topology` read the loaded preset. Both replies include `blocks`, `paths`, and `snapshots`. `get_state` also includes `snapshot` (0-based current snapshot) and `{setlist, index, name}` from opcode 23. When the catalog is present, each block also has `model_id`, `model_name`, `category`, and `knobs`, plus `"stereo"` when the firmware has both a mono and a stereo symbol for that model. Delay, reverb, and FX Loop blocks also have `"trails"` (the extra value after the named knobs). I/O blocks may include `assign_label` and `assign_menu`. IR Select knobs replace the catalog dashes with names from `list_irs`. The web GUI draws a slot grid; `paths` only decides parked vs live split.
 
 `list_presets` without `setlist` lists the active Floor setlist from `preset_info`. With `"setlist":0`–`7` it lists that setlist's names only.
 

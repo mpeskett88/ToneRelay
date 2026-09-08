@@ -1340,6 +1340,9 @@ fn get_param(
                                 if let Some(label) = knob.get("label") {
                                     body["label"] = label.clone();
                                 }
+                                if let Some(format) = knob.get("format") {
+                                    body["format"] = format.clone();
+                                }
                                 if let Some(choices) = knob.get("choices") {
                                     body["choices"] = choices.clone();
                                 }

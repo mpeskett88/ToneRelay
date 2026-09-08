@@ -1358,7 +1358,7 @@ button.inspector-fav:active {
 
 .row {
   display: grid;
-  grid-template-columns: 7.5rem 1fr 4rem;
+  grid-template-columns: minmax(5.5rem, 7.5rem) 1fr minmax(5.75rem, max-content);
   gap: var(--space-2);
   align-items: center;
   margin: var(--space-2) 0;
@@ -1367,6 +1367,10 @@ button.inspector-fav:active {
 .row label {
   color: var(--text-secondary);
   font-size: var(--fs-14);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .param-value {
@@ -1376,6 +1380,7 @@ button.inspector-fav:active {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   text-align: right;
+  white-space: nowrap;
 }
 
 .toggle {
@@ -1395,7 +1400,7 @@ button.inspector-fav:active {
 }
 
 .row.assign-row {
-  grid-template-columns: 7.5rem 1fr 4rem;
+  grid-template-columns: minmax(5.5rem, 7.5rem) 1fr minmax(5.75rem, max-content);
 }
 
 .choice-seg {
@@ -1766,7 +1771,7 @@ rect.eq-handle-mark {
   }
 
   .row {
-    grid-template-columns: minmax(0, 1fr) 3.6rem;
+    grid-template-columns: minmax(0, 1fr) minmax(5.75rem, max-content);
     grid-template-areas:
       "label value"
       "control control";

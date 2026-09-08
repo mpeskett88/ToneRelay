@@ -1,3 +1,8 @@
+import type { FormatSpec } from "./format";
+import { formatValue } from "./format";
+
+export type { FormatRange, FormatSpec } from "./format";
+
 export type CatalogParam = {
   name: string;
   index: number;
@@ -9,6 +14,7 @@ export type CatalogParam = {
   kind?: string;
   label?: string;
   choices?: string[];
+  format?: FormatSpec;
 };
 
 export type KnobMeta = {
@@ -22,6 +28,7 @@ export type KnobMeta = {
   display?: string;
   label?: string;
   choices?: string[];
+  format?: FormatSpec;
 };
 
 export type CatalogModel = {
@@ -79,6 +86,7 @@ export type DumpBlock = {
   category?: string;
   knobs?: KnobMeta[];
   enabled?: boolean;
+  trails?: boolean;
   stereo?: boolean;
   assign_label?: string;
   assign_menu?: Array<{ value: number; label: string }>;
@@ -259,6 +267,16 @@ export function uiToWire(ui: number, scale: UiScale): number {
   return ui;
 }
 
+/** Slider text: HX Edit recipe when the daemon sent one, else the Essex heuristics. */
+export function shownParamValue(wire: number, param: CatalogParam): string {
+  if (param.format) {
+    return formatValue(wire, param.format);
+  }
+  const scale = uiScale(param);
+  const ui = wireToUi(wire, scale);
+  return scale === "raw" ? ui.toFixed(2) : ui.toFixed(1);
+}
+
 export function bankPreset(index: number): { bank: number; preset: number } {
   return { bank: Math.floor(index / 16), preset: index % 16 };
 }
@@ -353,6 +371,7 @@ export function knobToParam(knob: KnobMeta): CatalogParam {
     kind: knob.kind,
     label: knob.label,
     choices: knob.choices,
+    format: knob.format,
   };
 }
 

@@ -24,7 +24,7 @@ mod load;
 mod write;
 
 pub use build::{documents_from_backup, empty_the_chain, resolve, slots_from_hlx, Built};
-pub use format::Display;
+pub use format::{Display, FormatRange, FormatSpec};
 pub use hxb::{
     read_backup, read_favourite_file, read_setlist_file, write_backup, Backup, BackupPreset, Block,
     Container, Favourite, NewBackup,
@@ -502,6 +502,18 @@ impl Catalog {
             .and_then(|key| self.displays.get(key))
             .map(|d| d.render(value, self))
             .unwrap_or_else(|| format::plain(param, value))
+    }
+
+    /// The HX Edit format recipe for a parameter, aliases already followed.
+    ///
+    /// `None` when the catalog has no `displayType` for this knob. Clients use
+    /// this to format live slider values without shipping `HelixControls.json`.
+    pub fn format_spec(&self, param: &Param) -> Option<FormatSpec> {
+        param
+            .display
+            .as_deref()
+            .and_then(|key| self.displays.get(key))
+            .map(|d| d.spec(self))
     }
 
     /// Turn text the user typed into the value the device expects.

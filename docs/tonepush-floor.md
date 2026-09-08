@@ -38,7 +38,7 @@ Or set `HX_RESOURCES_DEST` to that folder. Artwork dirs `icons_models` and `icon
 
 To extract from an installer instead: `./scripts/extract-hx-catalog.sh` or `./scripts/extract-hx-catalog.sh HX_Edit_3.82.dmg`.
 
-The daemon loads this catalog at start (`Catalog::load`, then `hxblue/resources`). `get_state` then attaches `model_id`, `model_name`, `category`, and `knobs` (name, min, max, kind, HX Edit label). The GUI still works without that cache. It then shows model numbers and the live Essex map.
+The daemon loads this catalog at start (`Catalog::load`, then `hxblue/resources`). `get_state` then attaches `model_id`, `model_name`, `category`, and `knobs` (name, min, max, kind, HX Edit label, and `format` recipe). The GUI still works without that cache. It then shows model numbers and the live Essex map.
 
 ## Run
 

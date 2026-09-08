@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createGattReassembler, encodeGattChunks, rememberedTransport } from "./bridge";
-import { bankPreset, canPickModel, categoryOf, categoryPaint, categoryTitle, choiceIndex, choiceWireBase, dspHeadroom, dspRefuseMessage, dumpCategory, helixSlotLabel, hxCategoryKind, knobToParam, modelFits, paramLabel, uiToWire, usesChoiceSegment, wireToUi, type DumpBlock } from "./catalog";
+import { bankPreset, canPickModel, categoryOf, categoryPaint, categoryTitle, choiceIndex, choiceWireBase, dspHeadroom, dspRefuseMessage, dumpCategory, helixSlotLabel, hxCategoryKind, knobToParam, modelFits, paramLabel, shownParamValue, uiToWire, usesChoiceSegment, wireToUi, type DumpBlock } from "./catalog";
+import { formatValue } from "./format";
 
 describe("GATT chunks", () => {
   it("round-trips a payload larger than one chunk", () => {
@@ -82,6 +83,62 @@ describe("catalog helpers", () => {
     });
     expect(param.choices?.[3]).toBe("6:1");
     expect(param.label).toBe("6:1");
+  });
+
+  it("prints HX Edit labels from format recipes", () => {
+    expect(formatValue(0.5, { scale: 10, pattern: "%.1f" })).toBe("5.0");
+    expect(formatValue(0.41, { scale: 10, pattern: "%.1f" })).toBe("4.1");
+    expect(formatValue(1, { scale: 100, pattern: "%.0f %%" })).toBe("100 %");
+    expect(formatValue(0, { pattern: "%+.1f dB" })).toBe("+0.0 dB");
+    expect(formatValue(-0.1, { pattern: "%+.1f dB" })).toBe("-0.1 dB");
+    expect(formatValue(3, { pattern: "%+.1f dB" })).toBe("+3.0 dB");
+    expect(formatValue(4.25, { pattern: "%.1f Hz" })).toBe("4.2 Hz");
+    expect(
+      formatValue(0.028, {
+        scale: 1000,
+        ranges: [
+          { lower: 0, upper: 9.999, pattern: "%.1f ms" },
+          { lower: 9.999, upper: 1000, pattern: "%.0f ms" },
+          { lower: 1000, upper: 99999, multiplier: 0.001, pattern: "%.3f s" },
+        ],
+      }),
+    ).toBe("28 ms");
+    expect(
+      formatValue(19.9, {
+        ranges: [
+          { lower: 0, upper: 20, pattern: "Off" },
+          { lower: 20, upper: 1000, pattern: "%.0f Hz" },
+        ],
+      }),
+    ).toBe("Off");
+    expect(
+      shownParamValue(0.5, {
+        name: "Drive",
+        index: 0,
+        usb: "f32",
+        source: "live",
+        format: { scale: 10, pattern: "%.1f" },
+      }),
+    ).toBe("5.0");
+    expect(
+      shownParamValue(0.41, {
+        name: "Drive",
+        index: 0,
+        usb: "f32",
+        source: "live",
+        notes: "UI/10",
+      }),
+    ).toBe("4.1");
+    const param = knobToParam({
+      index: 0,
+      name: "Mix",
+      usb: "f32",
+      min: 0,
+      max: 1,
+      format: { scale: 100, pattern: "%.0f %%" },
+    });
+    expect(param.format?.scale).toBe(100);
+    expect(shownParamValue(0.25, param)).toBe("25 %");
   });
 
   it("uses saturated category fills for chain tiles", () => {

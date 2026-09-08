@@ -23,6 +23,7 @@ import {
   choiceWireBase,
   usesChoiceSegment,
   paramLabel,
+  shownParamValue,
   uiScale,
   uiToWire,
   wireToUi,
@@ -2306,6 +2307,15 @@ function Inspector({
                 setError={setError}
               />
             ))}
+            {typeof dump.trails === "boolean" && (
+              <TrailsRow
+                dump={dump}
+                client={client}
+                blocks={blocks}
+                setBlocks={setBlocks}
+                setError={setError}
+              />
+            )}
             {params.length === 0 &&
               dump.params.map((v, pi) => (
                 <div className="row" key={pi}>
@@ -2317,6 +2327,48 @@ function Inspector({
         );
       })}
     </>
+  );
+}
+
+function TrailsRow({
+  dump,
+  client,
+  blocks,
+  setBlocks,
+  setError,
+}: {
+  dump: DumpBlock;
+  client: BridgeClient;
+  blocks: DumpBlock[];
+  setBlocks: (blocks: DumpBlock[]) => void;
+  setError: (msg: string | null) => void;
+}) {
+  const on = dump.trails === true;
+  return (
+    <div className="row">
+      <label>Trails</label>
+      <button
+        className={on ? "toggle on" : "toggle"}
+        type="button"
+        aria-pressed={on}
+        aria-label="Trails"
+        data-testid="trails-toggle"
+        onClick={() => {
+          const next = !on;
+          setBlocks(
+            blocks.map((b) =>
+              b.block === dump.block && b.subslot === dump.subslot ? { ...b, trails: next } : b,
+            ),
+          );
+          client.request({ op: "set_trails", block: dump.block, value: next }).catch((err: unknown) => {
+            setError(err instanceof BridgeError ? err.message : String(err));
+          });
+        }}
+      >
+        {on ? "On" : "Off"}
+      </button>
+      <span />
+    </div>
   );
 }
 
@@ -2532,7 +2584,7 @@ function ParamRow({
             void send("set_int", { value: v });
           }}
         />
-        <span className="param-value">{n}</span>
+        <span className="param-value">{param.format ? shownParamValue(n, param) : n}</span>
       </div>
     );
   }
@@ -2567,7 +2619,7 @@ function ParamRow({
           }, 100);
         }}
       />
-      <span className="param-value">{useNative ? ui.toFixed(2) : ui.toFixed(1)}</span>
+      <span className="param-value">{shownParamValue(wire, param)}</span>
     </div>
   );
 }
