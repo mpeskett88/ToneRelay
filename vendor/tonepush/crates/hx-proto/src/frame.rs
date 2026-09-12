@@ -95,6 +95,53 @@ impl Frame {
         })
     }
 
+    /// Every frame in one USB bulk completion.
+    ///
+    /// High-speed IN is 512 bytes. Two 256-byte protocol chunks can share a
+    /// transfer; decoding only the first silently drops the rest and the
+    /// stream never completes.
+    ///
+    /// An incomplete frame at the end is leftover for the next bulk
+    /// completion, not an error. Large replies straddle packets; treating
+    /// that as `LengthMismatch` discarded the whole transfer.
+    pub fn decode_all(buf: &[u8]) -> Result<Vec<Frame>, FrameError> {
+        Ok(Self::decode_stream(buf)?.0)
+    }
+
+    /// Complete frames plus any trailing bytes of an unfinished frame.
+    pub fn decode_stream(buf: &[u8]) -> Result<(Vec<Frame>, Vec<u8>), FrameError> {
+        let mut out = Vec::new();
+        let mut offset = 0;
+        while offset + 8 <= buf.len() {
+            if buf[offset..].iter().all(|&b| b == 0) {
+                break;
+            }
+            let len =
+                u32::from_le_bytes([buf[offset], buf[offset + 1], buf[offset + 2], 0]) as usize;
+            if len > 8192 {
+                return Err(FrameError::LengthMismatch {
+                    declared: len,
+                    available: buf.len() - offset - 8,
+                });
+            }
+            if offset + 8 + len > buf.len() {
+                return Ok((out, buf[offset..].to_vec()));
+            }
+            let frame = Frame::decode(&buf[offset..])?;
+            let mut step = frame.wire_len();
+            if offset + step > buf.len() {
+                step = buf.len() - offset;
+            }
+            offset += step;
+            out.push(frame);
+        }
+        let tail = &buf[offset..];
+        if !tail.is_empty() && !tail.iter().all(|&b| b == 0) {
+            return Ok((out, tail.to_vec()));
+        }
+        Ok((out, Vec::new()))
+    }
+
     pub fn encode(&self) -> Vec<u8> {
         let len = self.payload.len();
         let mut out = Vec::with_capacity(pad4(8 + len));
@@ -229,6 +276,36 @@ mod tests {
             assert_eq!(f.encode(), raw, "round trip failed");
             assert_eq!(f.wire_len(), raw.len());
         }
+    }
+
+    #[test]
+    fn decode_all_reads_two_frames_in_one_transfer() {
+        let mut packed = HELLO.to_vec();
+        packed.extend_from_slice(PADDED);
+        packed.resize(512, 0);
+        let frames = Frame::decode_all(&packed).unwrap();
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0].encode(), HELLO);
+        assert_eq!(frames[1].encode(), PADDED);
+    }
+
+    #[test]
+    fn decode_stream_keeps_a_split_frame() {
+        let mut packed = HELLO.to_vec();
+        packed.extend_from_slice(&PADDED[..12]);
+        let (frames, leftover) = Frame::decode_stream(&packed).unwrap();
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].encode(), HELLO);
+        assert_eq!(leftover, &PADDED[..12]);
+    }
+
+    #[test]
+    fn decode_stream_keeps_a_short_header() {
+        let mut packed = HELLO.to_vec();
+        packed.extend_from_slice(&PADDED[..7]);
+        let (frames, leftover) = Frame::decode_stream(&packed).unwrap();
+        assert_eq!(frames.len(), 1);
+        assert_eq!(leftover, &PADDED[..7]);
     }
 
     #[test]

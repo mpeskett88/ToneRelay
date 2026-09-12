@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = ["crates/hxbridge-usb"]
-exclude = ["vendor/tonepush"]
+exclude = ["vendor/tonepush", "esp32-p4"]
 
 [workspace.package]
 edition = "2021"

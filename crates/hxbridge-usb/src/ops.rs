@@ -42,7 +42,7 @@ impl FollowState {
         }
     }
 
-    fn remember(&mut self, setlist: i64, index: i64, name: Option<String>) {
+    pub fn remember(&mut self, setlist: i64, index: i64, name: Option<String>) {
         self.setlist = Some(setlist);
         self.index = Some(index);
         if let Some(name) = name {
@@ -523,7 +523,7 @@ fn list_presets(
                     0
                 }
             }
-            Err(_) => 0,
+            Err(e) => return usb_err("list_presets", e),
         }
     };
     match session.presets(setlist) {
@@ -1489,23 +1489,41 @@ fn list_models(catalog: Option<&Catalog>) -> Value {
 }
 
 fn get_state(session: &mut Session, catalog: Option<&Catalog>, follow: &mut FollowState) -> Value {
-    match session.read_preset() {
-        Ok(preset) => {
-            if catalog.is_some() && follow.irs.is_none() {
-                if let Ok(rows) = session.irs() {
-                    follow.irs = Some(rows);
+    // FETCH_PRESET (opcode 4) is the slot read HX Edit uses for backup; it
+    // answers in tens of milliseconds on a desktop host. READ_PRESET (22) dumps
+    // the live edit buffer as a long 256-byte stream. On ESP32-P4 that stream
+    // has been stalling the HTTP worker for ~30s and dropping the WebSocket.
+    match session.preset_info() {
+        Ok((sl, idx, name)) => {
+            follow.remember(sl, idx, Some(name.clone()));
+            match session.read_preset_at(sl, idx) {
+                Ok(Some(preset)) => {
+                    if catalog.is_some() && follow.irs.is_none() {
+                        if let Ok(rows) = session.irs() {
+                            follow.irs = Some(rows);
+                        }
+                    }
+                    let mut body = topology_from_preset(&preset, catalog, follow.irs.as_deref());
+                    body["ok"] = json!(true);
+                    body["op"] = json!("get_state");
+                    body["catalog"] = json!(catalog.is_some());
+                    body["setlist"] = json!(sl);
+                    body["index"] = json!(idx);
+                    body["name"] = json!(name);
+                    body
                 }
+                Ok(None) => json!({
+                    "ok": true,
+                    "op": "get_state",
+                    "catalog": catalog.is_some(),
+                    "setlist": sl,
+                    "index": idx,
+                    "name": name,
+                    "blocks": [],
+                    "paths": [],
+                }),
+                Err(e) => usb_err("get_state", e),
             }
-            let mut body = topology_from_preset(&preset, catalog, follow.irs.as_deref());
-            body["ok"] = json!(true);
-            body["op"] = json!("get_state");
-            body["catalog"] = json!(catalog.is_some());
-            if let Some((setlist, index, name)) = remember_info(session, follow) {
-                body["setlist"] = json!(setlist);
-                body["index"] = json!(index);
-                body["name"] = json!(name);
-            }
-            body
         }
         Err(e) => usb_err("get_state", e),
     }

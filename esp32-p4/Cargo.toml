@@ -1,0 +1,25 @@
+[package]
+name = "hxbridge-p4"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[dependencies]
+esp-idf-sys = { version = "0.36", features = ["binstart"] }
+hx-proto = { path = "../vendor/tonepush/crates/hx-proto" }
+hx-usb = { path = "../vendor/tonepush/crates/hx-usb", default-features = false }
+hx-catalog = { path = "../vendor/tonepush/crates/hx-catalog" }
+hxbridge-usb = { path = "../crates/hxbridge-usb", default-features = false }
+serde_json = "1"
+
+[build-dependencies]
+embuild = "0.33"
+
+[package.metadata.esp-idf-sys]
+esp_idf_tools_install_dir = "fromenv"
+esp_idf_sdkconfig_defaults = ["sdkconfig.defaults"]
+native = true
+
+[[package.metadata.esp-idf-sys.extra_components]]
+component_dirs = ["components/tonerelay"]

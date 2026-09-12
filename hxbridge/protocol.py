@@ -170,6 +170,8 @@ def handle_command(raw: bytes) -> dict:
             "pid": "4248",
             "product": "HELIX",
             "cli": cli_path(),
+            "platform": "pi",
+            "setup_required": False,
             "ops": list(OPS),
             "note": "TonePush USB daemon; Helix Floor firmware 3.80",
         }

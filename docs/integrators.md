@@ -87,6 +87,7 @@ when it is not 80.
 HTTP helpers on the same listener:
 
 - `GET /api/info` — same body as `{"op":"info"}`
+- `POST /api/cmd` — same JSON ops as `/ws` (body is one command object)
 - `GET /api/catalog` — ToneRelay's `model_param_index.json` (not HX Edit
   resources)
 

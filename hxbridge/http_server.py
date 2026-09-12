@@ -27,6 +27,7 @@ HERE = Path(__file__).resolve().parent
 STATIC = HERE / "static"
 CERT_DIR = HERE / "certs"
 CATALOG = HERE / "model_param_index.json"
+CMD_MAX = 512 * 1024
 
 # index.html names the hashed JS/CSS. If Safari caches it, a rebuild is invisible
 # until the home-screen app is killed. Hashed /assets/ can be cached forever.
@@ -81,6 +82,16 @@ async def api_catalog(_request: web.Request) -> web.Response:
     if not CATALOG.is_file():
         return web.json_response({"ok": False, "error": "catalog missing"}, status=404)
     return web.FileResponse(CATALOG, headers={"Content-Type": "application/json"})
+
+
+async def api_cmd(request: web.Request) -> web.Response:
+    if request.content_length is not None and request.content_length > CMD_MAX:
+        return web.json_response({"ok": False, "error": "bad body"}, status=400)
+    raw = await request.read()
+    if not raw or len(raw) > CMD_MAX:
+        return web.json_response({"ok": False, "error": "bad body"}, status=400)
+    result = await asyncio.to_thread(handle_command, raw)
+    return web.json_response(result, headers={"Cache-Control": "no-store"})
 
 
 async def ws_handler(request: web.Request) -> web.WebSocketResponse:
@@ -152,6 +163,7 @@ def build_app() -> web.Application:
     app = web.Application(middlewares=[cache_control])
     app.router.add_get("/api/info", api_info)
     app.router.add_get("/api/catalog", api_catalog)
+    app.router.add_post("/api/cmd", api_cmd)
     app.router.add_get("/ws", ws_handler)
     if STATIC.is_dir():
         app.router.add_static("/assets", STATIC / "assets", show_index=False)

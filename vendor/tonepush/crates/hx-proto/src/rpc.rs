@@ -455,6 +455,10 @@ impl StreamReader {
                 self.buf[pos + 6],
                 self.buf[pos + 7],
             ]) as usize;
+            if len > 2 * 1024 * 1024 {
+                self.buf.clear();
+                break;
+            }
             if self.buf.len() < pos + 8 + len {
                 break; // wait for more bytes
             }

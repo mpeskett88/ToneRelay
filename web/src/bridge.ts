@@ -73,9 +73,12 @@ export function timeoutFor(op: string): number {
     op === "set_model" ||
     op === "clear_block" ||
     op === "export_preset" ||
-    op === "import_preset"
+    op === "import_preset" ||
+    op === "wifi_scan" ||
+    op === "wifi_join" ||
+    op === "wifi_ap_password"
   ) {
-    return 45_000;
+    return 60_000;
   }
   return 15_000;
 }

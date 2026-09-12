@@ -10,8 +10,12 @@ use std::time::{Duration, Instant};
 use hx_proto::frame::{ChannelHeader, MSG_ACK, MSG_DATA, MSG_HELLO, MSG_KEEPALIVE};
 use hx_proto::msgpack::Value;
 use hx_proto::rpc::{self, Message, StreamReader};
-use hx_proto::{ChannelId, DeviceProfile, Frame, Preset, EP_IN, EP_OUT, INTERFACE, VENDOR_ID};
+use hx_proto::{ChannelId, DeviceProfile, Frame, Preset};
+#[cfg(feature = "nusb")]
+use hx_proto::{EP_IN, EP_OUT, INTERFACE, VENDOR_ID};
+#[cfg(feature = "nusb")]
 use nusb::transfer::{Buffer, Bulk, In, Out};
+#[cfg(feature = "nusb")]
 use nusb::MaybeFuture;
 
 mod commands;
@@ -20,6 +24,7 @@ pub mod backup;
 pub mod replay;
 
 /// The claimed interface and its two bulk endpoints, ready to become a wire.
+#[cfg(feature = "nusb")]
 type Endpoints = (
     nusb::Interface,
     nusb::Endpoint<Bulk, Out>,
@@ -61,6 +66,7 @@ impl Error {
 }
 
 /// A device found on the bus.
+#[cfg(feature = "nusb")]
 #[derive(Debug, Clone)]
 pub struct Found {
     pub profile: DeviceProfile,
@@ -69,6 +75,7 @@ pub struct Found {
 }
 
 /// List every supported HX device currently attached.
+#[cfg(feature = "nusb")]
 pub fn list() -> Result<Vec<Found>> {
     let devices = nusb::list_devices()
         .wait()
@@ -127,15 +134,12 @@ impl Channel {
 }
 
 pub struct Session {
-    /// Held purely to keep the interface claimed: dropping it releases the
-    /// claim and the endpoints stop working. `None` for a replay session,
-    /// which has no hardware to hold.
-    #[allow(dead_code)]
-    interface: Option<nusb::Interface>,
     /// The raw byte transport under the frame protocol: the USB endpoints in a
-    /// live session, a recorded transcript in a replay.
+    /// live session, a recorded transcript in a replay, or an ESP-IDF host.
     wire: Box<dyn Wire>,
     channels: BTreeMap<u16, Channel>,
+    /// Bytes of a frame that straddled two bulk completions.
+    leftover: Vec<u8>,
     /// Set when a transfer failed part-way through a message.
     ///
     /// A stream message that is only half-sent leaves the device waiting for
@@ -163,12 +167,17 @@ pub trait Wire: Send {
 
 /// The live USB transport. Exactly one read is kept posted so the device's
 /// unsolicited notifications are never dropped.
+#[cfg(feature = "nusb")]
 struct UsbWire {
+    /// Held so dropping the wire releases the claim.
+    #[allow(dead_code)]
+    interface: nusb::Interface,
     ep_out: nusb::Endpoint<Bulk, Out>,
     ep_in: nusb::Endpoint<Bulk, In>,
     read_posted: bool,
 }
 
+#[cfg(feature = "nusb")]
 impl Wire for UsbWire {
     fn send(&mut self, bytes: &[u8]) -> Result<()> {
         self.ep_out.submit(Buffer::from(bytes.to_vec()));
@@ -196,6 +205,7 @@ impl Wire for UsbWire {
     }
 }
 
+#[cfg(feature = "nusb")]
 impl Found {
     /// Open the device and bring every channel up.
     ///
@@ -216,11 +226,12 @@ impl Found {
     fn open_once(&self) -> Result<Session> {
         let (interface, ep_out, ep_in) = self.claim()?;
         let wire: Box<dyn Wire> = Box::new(UsbWire {
+            interface,
             ep_out,
             ep_in,
             read_posted: false,
         });
-        Session::bring_up(Some(interface), wire, self.profile)
+        Session::bring_up(wire, self.profile)
     }
 
     /// Open the device with every transfer copied into `log`, to capture a
@@ -241,12 +252,13 @@ impl Found {
     fn open_recording_once(&self, log: &replay::Log) -> Result<Session> {
         let (interface, ep_out, ep_in) = self.claim()?;
         let usb: Box<dyn Wire> = Box::new(UsbWire {
+            interface,
             ep_out,
             ep_in,
             read_posted: false,
         });
         let wire: Box<dyn Wire> = Box::new(replay::RecordingWire::new(usb, log.clone()));
-        Session::bring_up(Some(interface), wire, self.profile)
+        Session::bring_up(wire, self.profile)
     }
 
     /// Claim the interface and open its bulk endpoints, cleared and ready.
@@ -291,16 +303,13 @@ impl Found {
 
 impl Session {
     /// Construct a session over `wire` and bring it up: handshake, then a
-    /// liveness read. Shared by a live open, a recording open, and a replay.
-    fn bring_up(
-        interface: Option<nusb::Interface>,
-        wire: Box<dyn Wire>,
-        profile: DeviceProfile,
-    ) -> Result<Session> {
+    /// liveness read. Shared by a live open, a recording open, a replay, and
+    /// an ESP-IDF USB host.
+    fn bring_up(wire: Box<dyn Wire>, profile: DeviceProfile) -> Result<Session> {
         let mut s = Session {
-            interface,
             wire,
             channels: BTreeMap::new(),
+            leftover: Vec::new(),
             poisoned: None,
             profile,
         };
@@ -313,11 +322,17 @@ impl Session {
         Ok(s)
     }
 
+    /// Open a live session over any `Wire` (desktop USB, ESP-IDF host, or a
+    /// recorded transcript).
+    pub fn from_wire(wire: Box<dyn Wire>, profile: DeviceProfile) -> Result<Session> {
+        Session::bring_up(wire, profile)
+    }
+
     /// A session that talks to `wire` - a recorded transcript - instead of
     /// hardware. Runs the same handshake and liveness read a live open does,
     /// against the recorded responses, so replaying reproduces a real session.
     pub fn replaying(wire: Box<dyn Wire>, profile: DeviceProfile) -> Result<Session> {
-        Session::bring_up(None, wire, profile)
+        Session::from_wire(wire, profile)
     }
 
     /// Payload of the channel handshake, taken verbatim from HX Edit. The
@@ -366,7 +381,7 @@ impl Session {
         }
         .encode_into(&mut payload);
         self.write(&Frame::new(id.device, id.host, payload))?;
-        let _ = self.read_once(Self::REPLY);
+        self.wait_incoming(Self::HANDSHAKE_WAIT);
         Ok(())
     }
 
@@ -394,7 +409,9 @@ impl Session {
         let mut hello = Frame::new(id.device, id.host, payload);
         hello.flags = hx_proto::frame::FLAG_HANDSHAKE;
         self.write(&hello)?;
-        let _ = self.read_once(Self::REPLY);
+        if !self.wait_incoming(Self::HANDSHAKE_WAIT) {
+            return Err(Error::Timeout(0));
+        }
 
         // Byte accounting starts here; the handshake restarts the channel.
         if let Some(ch) = self.channels.get_mut(&id.device) {
@@ -406,11 +423,33 @@ impl Session {
         }
 
         self.send_stream(id, service, &Value::UInt(service as u64))?;
-        let _ = self.read_once(Self::REPLY);
+        if !self.wait_incoming(Self::HANDSHAKE_WAIT) {
+            return Err(Error::Timeout(0));
+        }
         if let Some(ch) = self.channels.get_mut(&id.device) {
             ch.reader.take_messages();
         }
         self.ack_channel(id)
+    }
+
+    /// Wait until a real frame arrives, or `budget` elapses.
+    ///
+    /// Zero-length IN completions are not replies. Treating one as "the device
+    /// answered" used to let the next HELLO go out while the actual reply was
+    /// still in flight.
+    fn wait_incoming(&mut self, budget: Duration) -> bool {
+        let deadline = Instant::now() + budget;
+        while Instant::now() < deadline {
+            let slice = deadline.saturating_duration_since(Instant::now());
+            if slice.is_zero() {
+                break;
+            }
+            match self.read_once(slice.min(Self::REPLY_READ)) {
+                Ok(Some(_)) => return true,
+                Ok(None) | Err(_) => {}
+            }
+        }
+        false
     }
 
     /// Empty the endpoint before saying anything.
@@ -463,15 +502,34 @@ impl Session {
     /// Read one frame and route its payload into the owning channel.
     fn read_once(&mut self, timeout: Duration) -> Result<Option<Frame>> {
         let data = self.wire.recv(timeout)?;
-        if data.is_empty() {
+        if data.is_empty() && self.leftover.is_empty() {
             return Ok(None);
         }
         if debug() {
             eprintln!("RX {}", hex(&data));
         }
-        let frame = Frame::decode(&data).map_err(|e| Error::Protocol(e.to_string()))?;
-        self.route(&frame);
-        Ok(Some(frame))
+        let mut buf = std::mem::take(&mut self.leftover);
+        buf.extend_from_slice(&data);
+        let (frames, rest) =
+            Frame::decode_stream(&buf).map_err(|e| Error::Protocol(e.to_string()))?;
+        self.leftover = rest;
+        let last = frames.last().cloned();
+        for frame in &frames {
+            self.route(frame);
+        }
+        Ok(last)
+    }
+
+    /// Empty the host IN queue without waiting. Cap how many packets we take
+    /// before acknowledging: draining a long burst without acks fills the
+    /// device window and it stops sending.
+    fn pull_queued(&mut self) {
+        for _ in 0..4 {
+            match self.read_once(Duration::ZERO) {
+                Ok(Some(_)) => {}
+                _ => break,
+            }
+        }
     }
 
     fn route(&mut self, f: &Frame) {
@@ -506,19 +564,33 @@ impl Session {
         Ok((seq, ch.ack()))
     }
 
-    /// How long to wait for the device to answer a handshake or service open.
-    const REPLY: Duration = Duration::from_millis(800);
+    /// How long to wait for a handshake or service-open reply.
+    ///
+    /// One 800 ms read was enough on a desktop host. The ESP32 USB-host path
+    /// posts IN completions through a queue, so a HELLO reply can land after
+    /// that window; proceeding to the next HELLO then desynchronises CONTROL
+    /// while DATA (opened last) still answers.
+    const HANDSHAKE_WAIT: Duration = Duration::from_secs(2);
     /// Per-read timeout while clearing a backlog.
     const DRAIN_READ: Duration = Duration::from_millis(150);
     /// Total budget for clearing a backlog. Bounded because an unbounded drain
     /// kept the endpoint busy and coincided with device lock-ups.
     const DRAIN_BUDGET: Duration = Duration::from_secs(3);
     /// How long a single bulk write may take.
+    #[cfg(feature = "nusb")]
     const WRITE: Duration = Duration::from_secs(2);
     /// How long to wait for a reply before giving up on a request.
+    ///
+    /// Silence for this long means the device is not answering. Bytes still
+    /// arriving (a large preset in 256-byte chunks) reset the idle timer up to
+    /// [`REPLY_MAX`] so a slow host is not cut off mid-transfer.
     const REPLY_BUDGET: Duration = Duration::from_secs(6);
+    /// Hard cap for one request, even if the device keeps sending.
+    /// 30s held the ESP HTTP/WebSocket worker until the TCP session died
+    /// ("Wi-Fi connection closed") and left the Helix USB stack wedged.
+    const REPLY_MAX: Duration = Duration::from_secs(8);
     /// Per-read timeout while waiting for a reply.
-    const REPLY_READ: Duration = Duration::from_millis(300);
+    const REPLY_READ: Duration = Duration::from_millis(50);
     /// Pause between chunks of a large send, letting the device's
     /// acknowledgements through so its receive window reopens.
     const BETWEEN_CHUNKS: Duration = Duration::from_millis(80);
@@ -713,15 +785,37 @@ impl Session {
         let msg = Message::Request { txn, opcode, args };
         self.send_stream(id, service(id), &msg.to_value())?;
 
-        let deadline = Instant::now() + Self::REPLY_BUDGET;
-        while Instant::now() < deadline {
+        let give_up = Instant::now() + Self::REPLY_MAX;
+        let mut idle_deadline = Instant::now() + Self::REPLY_BUDGET;
+        let mut idle_reads = 0u32;
+        while Instant::now() < give_up && Instant::now() < idle_deadline {
             // Acknowledge only when stream bytes actually arrived. The device
             // sends zero-length transfers when it has nothing to say, and
             // acking those burns a sequence number, which desynchronises the
             // channel and stalls the transfer partway through.
             let before = self.rx_bytes(id);
             let _ = self.read_once(Self::REPLY_READ);
-            let got = self.rx_bytes(id) > before;
+            let mut got = self.rx_bytes(id) > before;
+            // One USB packet, one ack. Pulling a burst before acking fills the
+            // device window and it stops, which on this host looks like a hang
+            // until the chip resets.
+            if got {
+                idle_reads = 0;
+                idle_deadline = Instant::now() + Self::REPLY_BUDGET;
+                self.ack_channel(id)?;
+            }
+            loop {
+                let before = self.rx_bytes(id);
+                match self.read_once(Duration::ZERO) {
+                    Ok(Some(_)) if self.rx_bytes(id) > before => {
+                        got = true;
+                        idle_reads = 0;
+                        idle_deadline = Instant::now() + Self::REPLY_BUDGET;
+                        self.ack_channel(id)?;
+                    }
+                    _ => break,
+                }
+            }
 
             let ready: Vec<_> = self
                 .channels
@@ -761,13 +855,25 @@ impl Session {
             }
             // Large results arrive in 256-byte chunks, and each one is released
             // by acknowledging the bytes already received.
-            if got {
-                self.ack_channel(id)?;
+            if !got {
+                idle_reads += 1;
+                if idle_reads >= 120 {
+                    break;
+                }
             }
             // And the channels nobody is waiting on need it too - see
             // `ack_idle_channels`.
             self.ack_idle_channels(id)?;
+            // Yield so the ESP32 idle task can feed the task watchdog. A tight
+            // IN/ack loop starves idle, the chip resets mid-transfer, and the
+            // Helix needs its 9V pulled.
+            std::thread::sleep(Duration::from_millis(1));
         }
+        self.pull_queued();
+        if let Some(ch) = self.channels.get_mut(&id.device) {
+            ch.reader = StreamReader::new();
+        }
+        self.leftover.clear();
         Err(Error::Timeout(txn))
     }
 

@@ -1,5 +1,5 @@
-mod ops;
-mod state;
+use hxbridge_usb::ops;
+use hxbridge_usb::state;
 
 use std::fmt;
 use std::fs;

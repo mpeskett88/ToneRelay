@@ -108,6 +108,7 @@ If you are writing a client that is not the ToneRelay GUI, start with [integrato
 HTTP helpers:
 
 - `GET /api/info` — same payload as `{"op":"info"}`
+- `POST /api/cmd` — same JSON ops as `/ws` (the GUI uses this for dumps)
 - `GET /api/catalog` — `model_param_index.json`
 
 ## ESP32 later

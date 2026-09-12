@@ -9,6 +9,7 @@ import {
   rememberedTransport,
   WsTransport,
   type JsonValue,
+  type Reply,
   type Transport,
 } from "./bridge";
 import {
@@ -39,6 +40,7 @@ import {
   type ModelCategory,
   type ModelShelf,
 } from "./catalog";
+import { SetupWizard, type WizardInfo } from "./SetupWizard";
 import {
   boardNodes,
   buildChain,
@@ -88,6 +90,62 @@ function slotAtPoint(x: number, y: number): number | null {
 
 type Preset = { index: number; name: string };
 type Setlist = { index: number; name: string };
+type BootInfo = {
+  ok?: boolean;
+  platform?: string;
+  setup_required?: boolean;
+  ap_secured?: boolean;
+  catalog?: boolean;
+  catalog_ready?: boolean;
+  catalog_models?: number;
+  usb?: boolean;
+  present?: boolean;
+  opening?: boolean;
+  hold_open?: boolean;
+  note?: string;
+  wifi?: {
+    sta?: boolean;
+    ssid?: string;
+    ip?: string;
+    ap?: string;
+    ap_ip?: string;
+    mdns?: string;
+  };
+};
+
+async function apiCmd(
+  cmd: { op: string; [k: string]: JsonValue },
+  timeoutMs = 20_000,
+): Promise<Reply> {
+  const ac = new AbortController();
+  const timer = window.setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    const res = await fetch("/api/cmd", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(cmd),
+      signal: ac.signal,
+    });
+    if (!res.ok) {
+      throw new BridgeError(`setup request failed (${res.status})`);
+    }
+    return (await res.json()) as Reply;
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new BridgeError(`timeout waiting for ${cmd.op}`);
+    }
+    throw err;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+function helixSlots(index?: number, name?: string): Preset[] {
+  return Array.from({ length: 32 }, (_, i) => ({
+    index: i,
+    name: i === index ? (name ?? "") : "",
+  }));
+}
 
 function setlistLabel(index: number, names: Setlist[]): string {
   const found = names.find((s) => s.index === index)?.name?.trim();
@@ -181,6 +239,13 @@ export default function App() {
   }, [error, errorAt]);
   const [busy, setBusy] = useState<string | null>(null);
   const [usb, setUsb] = useState<boolean | null>(null);
+  const [present, setPresent] = useState(false);
+  const [helixPrompt, setHelixPrompt] = useState(true);
+  const [helixSilent, setHelixSilent] = useState(false);
+  const helixSilentRef = useRef(false);
+  const [bootInfo, setBootInfo] = useState<BootInfo | null>(null);
+  const skipResumeAfterSetup = useRef(false);
+  const stayInWizard = useRef(false);
   const [presets, setPresets] = useState<Preset[]>([]);
   const [setlists, setSetlists] = useState<Setlist[]>([]);
   const [setlist, setSetlist] = useState(0);
@@ -287,9 +352,47 @@ export default function App() {
     }
   }
 
+  async function loadPresetNames(sl: number) {
+    try {
+      const listed = await apiCmd({ op: "list_presets", setlist: sl }, 12_000);
+      if (!listed.ok) {
+        return;
+      }
+      const rows = (listed.presets as Preset[]) ?? [];
+      if (rows.length > 0) {
+        setPresets(rows);
+      }
+    } catch {
+      /* Current slot name is already on screen. */
+    }
+  }
+
+  async function loadChainOverHttp() {
+    try {
+      const state = await apiCmd({ op: "get_state" }, 20_000);
+      if (!state.ok) {
+        return;
+      }
+      await applyState(state as {
+        blocks?: DumpBlock[];
+        paths?: TopoPath[];
+        snapshots?: string[];
+        setlist?: number;
+        index?: number;
+        name?: string;
+      });
+      if (typeof state.setlist === "number") {
+        setSetlist(state.setlist);
+      }
+    } catch {
+      /* Editor is already up; the chain can load on a later refresh. */
+    }
+  }
+
   async function connect(kind: "bluetooth" | "wifi", auto = false) {
     setError(null);
     setBusy(kind === "bluetooth" ? "Opening Bluetooth…" : "Opening Wi-Fi…");
+    let toClose: BridgeClient | null = null;
     try {
       let transport: Transport;
       if (kind === "bluetooth") {
@@ -306,56 +409,119 @@ export default function App() {
         transport = await WsTransport.connect();
       }
       const next = new BridgeClient(transport);
-      const info = await next.request({ op: "info" });
+      toClose = next;
+      let info = await next.request({ op: "info" });
+      if (!info.usb && info.present) {
+        setBusy("Waiting for Helix…");
+        const hardStop = Date.now() + 8_000;
+        while (!info.usb && Date.now() < hardStop) {
+          await new Promise((r) => window.setTimeout(r, 500));
+          info = await next.request({ op: "info" });
+        }
+      }
       setUsb(Boolean(info.usb));
-      setClient(next);
-      setTransportName(transport.name);
-      rememberTransport(transport.name);
-      setBusy("Loading presets…");
+      setPresent(info.present === true);
+      const onEsp = info.platform === "esp32-p4";
+      if (!info.usb) {
+        setClient(next);
+        setTransportName(transport.name);
+        rememberTransport(transport.name);
+        toClose = null;
+        setHelixPrompt(true);
+        return;
+      }
+      setHelixPrompt(false);
+      setHelixSilent(false);
+      helixSilentRef.current = false;
+      setBusy("Reading preset…");
+      let meta: Reply | null = null;
       try {
-        const listedSets = await next.request({ op: "list_setlists" });
+        meta = await apiCmd({ op: "preset_info" }, 20_000);
+      } catch (err) {
+        meta = {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+      if (!meta.ok) {
+        const why = String(meta.error ?? "preset_info failed");
+        const silent = /timed out waiting for a reply/i.test(why);
+        setError(
+          silent
+            ? "Helix is on USB but not answering. Unplug its 9V adapter, wait for boot, then retry."
+            : why,
+        );
+        setHelixSilent(silent);
+        helixSilentRef.current = silent;
+        setHelixPrompt(true);
+        try {
+          if (!(onEsp && !info.catalog && !info.catalog_ready)) {
+            const models = await apiCmd({ op: "list_models" }, 8_000);
+            if (models.ok) {
+              const cats = (models.categories as ModelCategory[]) ?? [];
+              setModelCats(
+                cats.filter(
+                  (c) => c.models.length > 0 || (c.shelves ?? []).some((s) => s.models.length > 0),
+                ),
+              );
+            }
+          }
+        } catch {
+          setModelCats([]);
+        }
+        setClient(next);
+        setTransportName(transport.name);
+        rememberTransport(transport.name);
+        toClose = null;
+        return;
+      }
+      if (typeof meta.setlist === "number") {
+        setSetlist(meta.setlist);
+        setLoadedSetlist(meta.setlist);
+      }
+      if (typeof meta.index === "number") {
+        setSelected(meta.index);
+        const nm = typeof meta.name === "string" ? meta.name : "";
+        setPresets(helixSlots(meta.index, nm));
+      }
+      if (typeof meta.name === "string" && meta.name) {
+        setLoadedName(meta.name);
+      }
+      try {
+        const listedSets = await apiCmd({ op: "list_setlists" }, 12_000);
         const rows = (listedSets.setlists as Setlist[]) ?? [];
-        if (Array.isArray(rows) && rows.length > 0) {
+        if (listedSets.ok && Array.isArray(rows) && rows.length > 0) {
           setSetlists(rows);
         }
       } catch {
         setSetlists([]);
       }
-      const listed = await next.request({ op: "list_presets" });
-      const rows = (listed.presets as Preset[]) ?? [];
-      const sl = typeof listed.setlist === "number" ? listed.setlist : 0;
-      setPresets(rows);
-      setSetlist(sl);
-      setLoadedSetlist(sl);
-      if (typeof listed.index === "number") {
-        setSelected(listed.index);
-      }
-      setBusy("Reading preset…");
-      const state = await next.request({ op: "get_state" });
-      await applyState(state as {
-        blocks?: DumpBlock[];
-        paths?: TopoPath[];
-        snapshots?: string[];
-        setlist?: number;
-        index?: number;
-      });
-      if (typeof state.setlist === "number") {
-        setSetlist(state.setlist);
-      }
       try {
-        const models = await next.request({ op: "list_models" });
-        const cats = (models.categories as ModelCategory[]) ?? [];
-        setModelCats(
-          cats.filter(
-            (c) => c.models.length > 0 || (c.shelves ?? []).some((s) => s.models.length > 0),
-          ),
-        );
+        if (onEsp && !info.catalog && !info.catalog_ready) {
+          setModelCats([]);
+        } else {
+          const models = await apiCmd({ op: "list_models" }, 8_000);
+          if (models.ok) {
+            const cats = (models.categories as ModelCategory[]) ?? [];
+            setModelCats(
+              cats.filter(
+                (c) => c.models.length > 0 || (c.shelves ?? []).some((s) => s.models.length > 0),
+              ),
+            );
+          }
+        }
       } catch {
         setModelCats([]);
       }
+      await loadChainOverHttp();
+      setClient(next);
+      setTransportName(transport.name);
+      rememberTransport(transport.name);
+      toClose = null;
     } catch (err) {
-      if (!auto) {
-        setError(err instanceof Error ? err.message : String(err));
+      setError(err instanceof Error ? err.message : String(err));
+      if (toClose) {
+        await toClose.close();
       }
     } finally {
       setBusy(null);
@@ -363,7 +529,40 @@ export default function App() {
   }
 
   useEffect(() => {
+    let on = true;
+    fetch("/api/info")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((info: BootInfo | null) => {
+        if (on && info && typeof info === "object") {
+          setBootInfo(info);
+          if (info.setup_required) {
+            skipResumeAfterSetup.current = true;
+            stayInWizard.current = true;
+          }
+          if (typeof info.usb === "boolean") {
+            setUsb(info.usb);
+          }
+          if (typeof info.present === "boolean") {
+            setPresent(info.present);
+          }
+        }
+      })
+      .catch(() => {
+        /* Pi or file:// splash still works without this. */
+      });
+    return () => {
+      on = false;
+    };
+  }, []);
+
+  useEffect(() => {
     if (resumeStarted) {
+      return;
+    }
+    if (!bootInfo) {
+      return;
+    }
+    if (bootInfo.setup_required || skipResumeAfterSetup.current) {
       return;
     }
     const remembered = rememberedTransport();
@@ -372,7 +571,7 @@ export default function App() {
     }
     resumeStarted = true;
     void connect(remembered, true);
-  }, []);
+  }, [bootInfo]);
 
   useEffect(() => {
     if (!client) {
@@ -385,8 +584,8 @@ export default function App() {
         if (!on || !ev.dirty) {
           return;
         }
-        const state = await client.request({ op: "get_state" });
-        if (!on) {
+        const state = await apiCmd({ op: "get_state" }, 20_000);
+        if (!on || !state.ok) {
           return;
         }
         await applyState(state as {
@@ -396,16 +595,8 @@ export default function App() {
           setlist?: number;
           index?: number;
         });
-        const active = typeof state.setlist === "number" ? state.setlist : loadedSetlist;
-        if (typeof active === "number") {
-          setLoadedSetlist(active);
-          if (active === setlist) {
-            const listed = await client.request({ op: "list_presets", setlist: active });
-            if (!on) {
-              return;
-            }
-            setPresets((listed.presets as Preset[]) ?? []);
-          }
+        if (typeof state.setlist === "number") {
+          setLoadedSetlist(state.setlist);
         }
       } catch {
         /* poll is best-effort */
@@ -417,6 +608,47 @@ export default function App() {
       window.clearInterval(id);
     };
   }, [client, setlist, loadedSetlist]);
+
+  useEffect(() => {
+    if (!client) {
+      return;
+    }
+    let on = true;
+    let sawUsb = usb === true;
+    const tick = async () => {
+      try {
+        const info = (await fetch("/api/info").then((r) => r.json())) as BootInfo;
+        if (!on || !info || typeof info !== "object") {
+          return;
+        }
+        setBootInfo(info);
+        const nowUsb = Boolean(info.usb);
+        setUsb(nowUsb);
+        setPresent(info.present === true);
+        if (!nowUsb) {
+          setHelixPrompt(true);
+          setHelixSilent(false);
+          helixSilentRef.current = false;
+          sawUsb = false;
+        } else if (helixSilentRef.current) {
+          /* Session is open but RPC timed out; wait for USB to drop after a 9V pull. */
+        } else {
+          setHelixPrompt(false);
+          if (!sawUsb) {
+            sawUsb = true;
+            await loadChainOverHttp();
+          }
+        }
+      } catch {
+        /* poll is best-effort */
+      }
+    };
+    const id = window.setInterval(() => void tick(), 2500);
+    return () => {
+      on = false;
+      window.clearInterval(id);
+    };
+  }, [client]);
 
   async function selectPreset(index: number) {
     if (!client) {
@@ -430,6 +662,10 @@ export default function App() {
       await client.request({ op: "select_preset", bank, preset, setlist });
       setSelected(index);
       setLoadedSetlist(setlist);
+      const chosen = presets.find((p) => p.index === index)?.name;
+      if (chosen) {
+        setLoadedName(chosen);
+      }
       const state = await client.request({ op: "get_state" });
       await applyState(state as {
         blocks?: DumpBlock[];
@@ -452,7 +688,10 @@ export default function App() {
     setError(null);
     setBusy("Loading setlist…");
     try {
-      const listed = await client.request({ op: "list_presets", setlist: next });
+      const listed = await apiCmd({ op: "list_presets", setlist: next }, 12_000);
+      if (!listed.ok) {
+        throw new BridgeError(String(listed.error ?? "list_presets failed"));
+      }
       setSetlist(next);
       setPresets((listed.presets as Preset[]) ?? []);
       setConfirmIndex(null);
@@ -634,18 +873,41 @@ export default function App() {
   }
 
   if (!client) {
+    const onEsp = bootInfo?.platform === "esp32-p4";
+    const needsSetup = onEsp && Boolean(bootInfo?.setup_required);
+    if (needsSetup) {
+      stayInWizard.current = true;
+    }
+    if (stayInWizard.current) {
+      return (
+        <div className="app">
+          <header className="top">
+            <h1>ToneRelay</h1>
+          </header>
+          <SetupWizard
+            info={(bootInfo ?? {}) as WizardInfo}
+            onInfo={(next) => setBootInfo(next)}
+            onEnterEditor={() => void connect("wifi")}
+            connecting={busy}
+            connectError={error}
+          />
+        </div>
+      );
+    }
     return (
       <div className="app">
         <header className="top">
           <h1>ToneRelay</h1>
         </header>
         <div className="connect">
-          <p className="eyebrow">Helix floor</p>
+          <p className="eyebrow">{onEsp ? "ESP32-P4" : "Helix floor"}</p>
           <h2>Connect over Wi-Fi</h2>
           <p className="hint">
             {bleOk
-              ? "Wi-Fi is the usual path on this Pi, including iPhone. Bluetooth still works in Chrome, but only on HTTPS."
-              : "This browser has no Web Bluetooth. Use Wi-Fi to reach the Helix on this Pi."}
+              ? onEsp
+                ? "This board is on the LAN. Open the editor over Wi-Fi, or Bluetooth from Chrome on HTTPS."
+                : "Wi-Fi is the usual path on this Pi, including iPhone. Bluetooth still works in Chrome, but only on HTTPS."
+              : "This browser has no Web Bluetooth. Use Wi-Fi to reach the Helix."}
           </p>
           <div className="stack">
             <button
@@ -674,7 +936,7 @@ export default function App() {
     );
   }
 
-  const presetName = presets.find((p) => p.index === selected)?.name;
+  const presetName = presets.find((p) => p.index === selected)?.name ?? loadedName;
 
   return (
     <div className={`app ${menuOpen ? "menu-open" : ""}`}>
@@ -687,7 +949,13 @@ export default function App() {
           onClick={() => {
             setSnapOpen(false);
             setRenameEdit(null);
-            setMenuOpen((v) => !v);
+            setMenuOpen((v) => {
+              const next = !v;
+              if (next) {
+                void loadPresetNames(setlist);
+              }
+              return next;
+            });
           }}
         >
           <span />
@@ -865,6 +1133,32 @@ export default function App() {
         </aside>
         {menuOpen && (
           <button className="scrim" type="button" aria-label="Close preset list" onClick={() => setMenuOpen(false)} />
+        )}
+        {helixPrompt && (!usb || helixSilent) && (
+          <>
+            <button
+              className="model-scrim"
+              type="button"
+              aria-label="Dismiss Helix prompt"
+              onClick={() => setHelixPrompt(false)}
+            />
+            <div className="overwrite-sheet" role="dialog" aria-modal="true" aria-label="Helix not connected">
+              <h2>{helixSilent || present ? "Helix not answering" : "Helix not connected"}</h2>
+              {helixSilent || present ? (
+                <>
+                  <p>Unplug its 9V adapter, wait for the Helix to boot, then plug USB into the NANO USB-A port.</p>
+                  <p className="hint">A USB replug is not enough once it has gone silent.</p>
+                </>
+              ) : (
+                <p>Plug the Helix into the NANO USB-A port.</p>
+              )}
+              <div className="overwrite-actions">
+                <button type="button" className="overwrite-cancel" onClick={() => setHelixPrompt(false)}>
+                  OK
+                </button>
+              </div>
+            </div>
+          </>
         )}
         {confirmIndex !== null && pendingHlx && (
           <>
