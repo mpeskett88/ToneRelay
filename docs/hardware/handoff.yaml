@@ -1,0 +1,176 @@
+# ToneRelay P4 — machine-readable handoff
+# KiCad agent: treat this as the same contract as the Markdown in this folder.
+# If YAML and Markdown disagree, Markdown wins and you must fix the YAML.
+
+project:
+  name: ToneRelay P4
+  repo_path: docs/hardware/
+  kicad_output: hardware/tonerelay-p4/
+  kicad_version: "8 or 9"
+  pcb_layers: 4
+  fab: JLCPCB
+  phase: rev1_product_board
+
+product:
+  summary: >
+    Battery-powered USB 2.0 High-Speed host gadget running existing
+    hxbridge-p4 firmware. Phone uses Wi-Fi or BLE. Helix Floor is the
+    USB device on USB-A.
+  usb_role_board: host
+  usb_role_helix: device
+  helix:
+    vid: 0x0E41
+    pid: 0x4248
+    speed: high-speed
+    max_packet_bytes: 512
+    vendor_interface: 0
+    ep_out: 0x01
+    ep_in: 0x81
+    self_powered: true
+    power: helix_9v_not_this_board
+    one_host_at_a_time: true
+    wedge_recovery: unplug_helix_9v_then_usb
+
+compute:
+  mcu: ESP32-P4NRW32
+  min_revision: "3.0"
+  lab_revision: "3.1"
+  firmware_kconfig: CONFIG_ESP32P4_REV_MIN_301
+  psram_mb: 32
+  flash_mb: 16
+  cpu_mhz: 360
+  usb_dma_in_psram: false
+
+radio:
+  module: ESP32-C6-MINI-1-N4
+  bus: sdio_4bit
+  wifi: "802.11ax 2.4GHz"
+  bluetooth: ble_5
+  bluetooth_classic: false
+  hosted: esp_hosted
+  hosted_version_note: "~2.12.13"
+  slave_target: ESP32C6
+  ap_ssid_firmware: ToneRelay
+  ble_name_firmware: ToneRelay
+
+firmware_locked_pins:
+  sdio:
+    d0: 14
+    d1: 15
+    d2: 16
+    d3: 17
+    clk: 18
+    cmd: 19
+    reset_gpio: 54
+    reset_active_high: true
+  uart0:
+    tx: 37
+    rx: 38
+  usb_hs_phy:
+    dp_name: DP
+    dm_name: DM
+    espressif_pin_hint:
+      dp: 50
+      dm: 49
+    confirm_in_datasheet: true
+    vdd_usbphy_v: [2.97, 3.63]
+    vdd_usbphy_caps: ["10nF", "0.1uF", "4.7uF"]
+
+do_not_use_for_helix_usb:
+  - GPIO24
+  - GPIO25
+  - GPIO26
+  - GPIO27
+
+reserved_gpios_firmware_later:
+  btn_factory: 53
+  led_radio: 45
+  led_usb: 46
+  led_batt: 47
+  vbus_en: 48
+  i2c_sda: 7
+  i2c_scl: 8
+  vbus_en_default: hardware_pullup_on
+
+connectors:
+  usb_a:
+    role: hs_host
+    vbus: output_5v_switched_current_limited
+    silk: HELIX HOST
+  usb_c:
+    role: charge_and_uart_debug
+    cc: 5.1k_to_gnd
+    silk: CHARGE / DEBUG
+    dtr_rts_auto_download: jumper_default_open
+  battery:
+    chemistry: 1S_li_ion
+    connector: JST-PH-2
+    pack_protection_required: true
+
+power:
+  usb_c_charge: true
+  boost_5v_class_a: 2
+  design_peak_5v_a: 2
+  design_continuous_5v_a: 1
+  measure_nano_current_before_runtime_claims: true
+  do_not_power_helix: true
+  vbus_default_on: true
+
+layout:
+  usb_diff_ohm: 90
+  usb_length_match_mm_max: 0.15
+  usb_esd_extra_pF_max: 1
+  usb_pair_target_length_mm_max: 30
+  sdio_target_length_mm_max: 50
+  sdio_series_ohm: [22, 33]
+  stackup: sig_gnd_pwr_sig
+  no_usb_hub: true
+  no_ethernet: true
+
+explicit_non_goals:
+  - helix_bus_power
+  - airplay
+  - bluetooth_a2dp
+  - usb_audio_isoc
+  - wifi_5ghz
+  - ethernet
+  - mipi
+  - audio_codec
+  - microsd
+  - poe
+  - chip_down_c6
+  - esp32_s3_as_host
+  - kicad_docker_on_lab_pi
+  - hardcoded_secrets
+
+copy_from_nano_schematic:
+  url: https://files.waveshare.com/wiki/ESP32-P4-NANO/ESP32-P4-NANO-schematic.pdf
+  copy:
+    - usb_a_hs
+    - c6_sdio
+    - uart0_gpio37_38
+  do_not_copy:
+    - ethernet_rmii
+    - mipi
+    - codec
+    - microsd
+    - poe
+    - ch343_dtr_rts_hardwired_reset
+
+lab_bugs_hardware_must_not_repeat:
+  - uart_open_resets_p4
+  - missing_vbus_for_helix_enum
+  - usb_dma_buffers_in_psram
+  - vdd_usbphy_undecoupled
+  - sdio_gpio_remap
+
+espressif_overrides_this_packet:
+  - p4_power_pins
+  - crystals
+  - flash_pins
+  - usb_phy_decoupling
+
+this_packet_overrides_espressif:
+  - sdio_gpio_numbers
+  - uart0_gpio_numbers
+  - c6_reset_gpio_54_active_high

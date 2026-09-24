@@ -13,6 +13,7 @@
 use crate::msgpack::{Decoder, Encoder, Value};
 
 /// A parsed preset.
+#[derive(Clone)]
 pub struct Preset {
     /// Section offset table: a directory of the tone's top-level sections,
     /// decoded in [`computed_sections`](Self::computed_sections). Carried

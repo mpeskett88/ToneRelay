@@ -265,6 +265,11 @@ export default function App() {
   const [confirmIndex, setConfirmIndex] = useState<number | null>(null);
   const [renameEdit, setRenameEdit] = useState<{ index: number; draft: string } | null>(null);
   const importFileRef = useRef<HTMLInputElement>(null);
+  const stateEpoch = useRef(0);
+
+  function bumpState() {
+    stateEpoch.current += 1;
+  }
 
   useLayoutEffect(() => {
     function syncAppHeight() {
@@ -578,20 +583,27 @@ export default function App() {
       return;
     }
     let on = true;
+    let inflight = false;
     const tick = async () => {
+      if (inflight) {
+        return;
+      }
+      inflight = true;
       try {
+        const epoch = stateEpoch.current;
         const ev = await client.request({ op: "events" });
-        if (!on || !ev.dirty) {
+        if (!on || !ev.dirty || epoch !== stateEpoch.current) {
           return;
         }
-        const state = await apiCmd({ op: "get_state" }, 20_000);
-        if (!on || !state.ok) {
+        const state = await client.request({ op: "get_state" });
+        if (!on || !state.ok || epoch !== stateEpoch.current) {
           return;
         }
         await applyState(state as {
           blocks?: DumpBlock[];
           paths?: TopoPath[];
           snapshots?: string[];
+          snapshot?: number;
           setlist?: number;
           index?: number;
         });
@@ -600,6 +612,8 @@ export default function App() {
         }
       } catch {
         /* poll is best-effort */
+      } finally {
+        inflight = false;
       }
     };
     const id = window.setInterval(() => void tick(), 1000);
@@ -656,6 +670,7 @@ export default function App() {
     }
     const { bank, preset } = bankPreset(index);
     setError(null);
+    bumpState();
     setBusy("Selecting preset…");
     setMenuOpen(false);
     try {
@@ -856,14 +871,34 @@ export default function App() {
       return;
     }
     setError(null);
+    bumpState();
     setSnapshotIndex(index);
     try {
-      await client.request({ op: "select_snapshot", index });
+      const reply = await client.request({ op: "select_snapshot", index });
+      const epoch = stateEpoch.current;
+      if (epoch !== stateEpoch.current) {
+        return;
+      }
+      const enabled = Array.isArray(reply.enabled)
+        ? reply.enabled.filter((v): v is boolean => typeof v === "boolean")
+        : null;
+      if (enabled && enabled.length > 0) {
+        setBlocks((prev) =>
+          prev.map((b) =>
+            enabled[b.block] === undefined ? b : { ...b, enabled: enabled[b.block] },
+          ),
+        );
+        return;
+      }
       const state = await client.request({ op: "get_state" });
+      if (epoch !== stateEpoch.current || !state.ok) {
+        return;
+      }
       await applyState(state as {
         blocks?: DumpBlock[];
         paths?: TopoPath[];
         snapshots?: string[];
+        snapshot?: number;
         setlist?: number;
         index?: number;
       });
@@ -1263,6 +1298,7 @@ export default function App() {
           setBlocks={setBlocks}
           setError={setError}
           onSnapshot={selectSnapshot}
+          onMutate={bumpState}
         />
       </div>
     </div>
@@ -1279,6 +1315,7 @@ function Editor({
   setBlocks,
   setError,
   onSnapshot,
+  onMutate,
 }: {
   client: BridgeClient;
   blocks: DumpBlock[];
@@ -1289,6 +1326,7 @@ function Editor({
   setBlocks: (blocks: DumpBlock[]) => void;
   setError: (msg: string | null) => void;
   onSnapshot: (index: number) => void;
+  onMutate: () => void;
 }) {
   const boards = useMemo(() => buildChain(blocks, paths), [blocks, paths]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -1397,6 +1435,7 @@ function Editor({
         return;
       }
       try {
+        onMutate();
         await client.request({ op: "move_block", from, to });
         const state = await client.request({ op: "get_state" });
         setBlocks((state.blocks as DumpBlock[]) ?? []);
@@ -1404,7 +1443,7 @@ function Editor({
         setError(err instanceof Error ? err.message : String(err));
       }
     },
-    [client, setBlocks, setError],
+    [client, onMutate, setBlocks, setError],
   );
 
   function tapEmpty(slot: number) {
@@ -1424,16 +1463,17 @@ function Editor({
         return;
       }
       const next = node.enabled === false;
+      const prev = blocks;
+      onMutate();
+      setBlocks(blocks.map((b) => (b.block === dump.block ? { ...b, enabled: next } : b)));
       try {
         await client.request({ op: "set_bypass", block: dump.block, enabled: next });
-        setBlocks(
-          blocks.map((b) => (b.block === dump.block ? { ...b, enabled: next } : b)),
-        );
       } catch (err) {
+        setBlocks(prev);
         setError(err instanceof Error ? err.message : String(err));
       }
     },
-    [blocks, client, setBlocks, setError],
+    [blocks, client, onMutate, setBlocks, setError],
   );
 
   function startPress(cell: ChainCell, ev: ReactPointerEvent) {
@@ -1685,6 +1725,7 @@ function Editor({
             blocks={blocks}
             setBlocks={setBlocks}
             setError={setError}
+            onMutate={onMutate}
             onOpenPicker={
               canPickModel(inspect.category)
                 ? () => {
@@ -1700,6 +1741,7 @@ function Editor({
                       return;
                     }
                     try {
+                      onMutate();
                       await client.request({ op: "clear_block", block: dump.block });
                       const state = await client.request({ op: "get_state" });
                       const next = (state.blocks as DumpBlock[]) ?? [];
@@ -1744,6 +1786,7 @@ function Editor({
               return;
             }
             try {
+              onMutate();
               if (typeof favorite === "number") {
                 await client.request({
                   op: "apply_favorite",
@@ -2518,6 +2561,7 @@ function Inspector({
   blocks,
   setBlocks,
   setError,
+  onMutate,
   onOpenPicker,
   onClear,
   onSaveFavorite,
@@ -2527,6 +2571,7 @@ function Inspector({
   blocks: DumpBlock[];
   setBlocks: (blocks: DumpBlock[]) => void;
   setError: (msg: string | null) => void;
+  onMutate: () => void;
   onOpenPicker?: () => void;
   onClear?: () => void | Promise<void>;
   onSaveFavorite?: (name: string) => void | Promise<void>;
@@ -2738,7 +2783,7 @@ function Inspector({
           <div className="block-params" key={`${dump.block}:${dump.subslot}`}>
             {heading && <h3>{heading}</h3>}
             {typeof dump.assign === "number" && (
-              <AssignRow dump={dump} client={client} setError={setError} />
+              <AssignRow dump={dump} client={client} setError={setError} onMutate={onMutate} />
             )}
             {params.map((p) => (
               <ParamRow
@@ -2749,6 +2794,7 @@ function Inspector({
                 blocks={blocks}
                 setBlocks={setBlocks}
                 setError={setError}
+                onMutate={onMutate}
               />
             ))}
             {typeof dump.trails === "boolean" && (
@@ -2758,6 +2804,7 @@ function Inspector({
                 blocks={blocks}
                 setBlocks={setBlocks}
                 setError={setError}
+                onMutate={onMutate}
               />
             )}
             {params.length === 0 &&
@@ -2780,12 +2827,14 @@ function TrailsRow({
   blocks,
   setBlocks,
   setError,
+  onMutate,
 }: {
   dump: DumpBlock;
   client: BridgeClient;
   blocks: DumpBlock[];
   setBlocks: (blocks: DumpBlock[]) => void;
   setError: (msg: string | null) => void;
+  onMutate: () => void;
 }) {
   const on = dump.trails === true;
   return (
@@ -2804,6 +2853,7 @@ function TrailsRow({
               b.block === dump.block && b.subslot === dump.subslot ? { ...b, trails: next } : b,
             ),
           );
+          onMutate();
           client.request({ op: "set_trails", block: dump.block, value: next }).catch((err: unknown) => {
             setError(err instanceof BridgeError ? err.message : String(err));
           });
@@ -2820,10 +2870,12 @@ function AssignRow({
   dump,
   client,
   setError,
+  onMutate,
 }: {
   dump: DumpBlock;
   client: BridgeClient;
   setError: (msg: string | null) => void;
+  onMutate: () => void;
 }) {
   const value = dump.assign ?? 0;
   const menu = dump.assign_menu;
@@ -2837,6 +2889,7 @@ function AssignRow({
           defaultValue={value}
           onChange={(ev) => {
             const n = Number(ev.target.value);
+            onMutate();
             client.request({ op: "set_assign", block: dump.block, value: n }).catch((err: unknown) => {
               setError(err instanceof BridgeError ? err.message : String(err));
             });
@@ -2866,6 +2919,7 @@ function AssignRow({
           if (!Number.isInteger(n)) {
             return;
           }
+          onMutate();
           client.request({ op: "set_assign", block: dump.block, value: n }).catch((err: unknown) => {
             setError(err instanceof BridgeError ? err.message : String(err));
           });
@@ -2883,6 +2937,7 @@ function ParamRow({
   blocks,
   setBlocks,
   setError,
+  onMutate,
 }: {
   param: CatalogParam;
   dump: DumpBlock;
@@ -2890,6 +2945,7 @@ function ParamRow({
   blocks: DumpBlock[];
   setBlocks: (blocks: DumpBlock[]) => void;
   setError: (msg: string | null) => void;
+  onMutate: () => void;
 }) {
   const raw = dump.params[param.index];
   const debounce = useRef<number | null>(null);
@@ -2914,6 +2970,7 @@ function ParamRow({
 
   async function send(op: string, extra: Record<string, number | boolean>) {
     try {
+      onMutate();
       await client.request({
         op,
         block: dump.block,

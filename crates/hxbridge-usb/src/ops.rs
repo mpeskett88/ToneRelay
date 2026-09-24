@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use hx_catalog::{empty_the_chain, slots_from_hlx, to_hlx, Catalog};
 use hx_proto::msgpack::Value as HxValue;
 use hx_proto::preset::Kind;
@@ -7,7 +9,10 @@ use hx_proto::Preset;
 use hx_usb::Session;
 use serde_json::{json, Map, Value};
 
-use crate::state::{knobs_json, routing_labels, slot_param, topology_from_preset};
+use crate::state::{
+    apply_snapshot, knobs_json, routing_labels, set_slot_enabled, set_slot_param, slot_param,
+    topology_from_preset,
+};
 
 const GLOBAL_IDS: [i64; 2] = [30, 134];
 const HLX_MAX_BYTES: usize = 2 * 1024 * 1024;
@@ -33,13 +38,70 @@ pub struct FollowState {
     pub irs: Option<Vec<(i64, String)>>,
     /// Device favourite list from opcode 112. Cached for the USB session.
     pub favorites: Option<Vec<hx_usb::FavouriteEntry>>,
+    /// Last live edit buffer. Snapshot/bypass/knob writes patch this so
+    /// `get_state` does not stall USB for a 2 s READ_PRESET on the P4.
+    pub live: Option<Preset>,
+    /// Bumped when `live` is patched or cleared so an in-flight READ_PRESET
+    /// cannot replace newer local edits.
+    pub live_gen: u64,
+    ignore_notes_until: Option<Instant>,
+}
+
+/// Clone of the cached edit buffer for JSON off the USB lock.
+pub struct LiveClone {
+    pub preset: Preset,
+    pub irs: Option<Vec<(i64, String)>>,
+    pub setlist: Option<i64>,
+    pub index: Option<i64>,
+    pub name: Option<String>,
+    pub gen: u64,
 }
 
 impl FollowState {
     pub fn note(&mut self, notes: &[(i64, HxValue)]) {
-        if !notes.is_empty() {
-            self.dirty = true;
+        if notes.is_empty() {
+            return;
         }
+        if self
+            .ignore_notes_until
+            .is_some_and(|until| Instant::now() < until)
+        {
+            return;
+        }
+        self.dirty = true;
+    }
+
+    fn hush_notes(&mut self) {
+        self.ignore_notes_until = Some(Instant::now() + Duration::from_millis(2500));
+    }
+
+    fn bump_live(&mut self) {
+        self.live_gen = self.live_gen.wrapping_add(1);
+    }
+
+    fn clear_live(&mut self) {
+        self.live = None;
+        self.bump_live();
+    }
+
+    fn patch_live(&mut self) {
+        self.bump_live();
+        self.hush_notes();
+    }
+
+    pub fn live_gen(&self) -> u64 {
+        self.live_gen
+    }
+
+    pub fn clone_live(&self) -> Option<LiveClone> {
+        Some(LiveClone {
+            preset: self.live.clone()?,
+            irs: self.irs.clone(),
+            setlist: self.setlist,
+            index: self.index,
+            name: self.name.clone(),
+            gen: self.live_gen,
+        })
     }
 
     pub fn remember(&mut self, setlist: i64, index: i64, name: Option<String>) {
@@ -103,16 +165,16 @@ pub fn handle(
         "rename_preset" => rename_preset(session, obj, follow),
         "export_preset" => export_preset(session, catalog, obj),
         "import_preset" => import_preset(session, catalog, obj, follow),
-        "set_param" => set_param(session, obj),
-        "set_bool" => set_bool(session, obj),
-        "set_int" => set_int(session, obj),
-        "set_bypass" => set_bypass(session, obj),
-        "set_trails" => set_trails(session, obj),
+        "set_param" => set_param(session, obj, follow),
+        "set_bool" => set_bool(session, obj, follow),
+        "set_int" => set_int(session, obj, follow),
+        "set_bypass" => set_bypass(session, obj, follow),
+        "set_trails" => set_trails(session, obj, follow),
         "set_global" => set_global(session, obj),
         "set_assign" => set_assign(session, obj),
-        "get_param" => get_param(session, catalog, obj),
+        "get_param" => get_param(session, catalog, obj, follow),
         "get_assign" => get_assign(session, catalog, obj),
-        "get_state" => get_state(session, catalog, follow),
+        "get_state" => get_state(session, catalog, follow, obj),
         "list_models" => list_models(catalog),
         "topology" => topology(session, catalog),
         other => json!({"ok": false, "error": format!("unknown op: {other}")}),
@@ -332,6 +394,7 @@ fn apply_favorite(
         }
     }
     follow.dirty = true;
+    follow.clear_live();
     json!({
         "ok": true,
         "op": "apply_favorite",
@@ -570,6 +633,7 @@ fn select_preset(
     }
     match session.select_preset(setlist, index) {
         Ok(()) => {
+            follow.clear_live();
             follow.remember(setlist, index, None);
             json!({"ok": true, "op": "select_preset", "setlist": setlist, "index": index})
         }
@@ -587,8 +651,20 @@ fn select_snapshot(
     };
     match session.select_snapshot(index) {
         Ok(()) => {
-            follow.dirty = true;
-            json!({"ok": true, "op": "select_snapshot", "index": index})
+            if let Some(preset) = follow.live.as_mut() {
+                apply_snapshot(preset, index);
+            }
+            follow.patch_live();
+            let enabled = follow
+                .live
+                .as_ref()
+                .map(|p| p.slots.iter().map(|s| json!(s.enabled)).collect::<Vec<_>>());
+            json!({
+                "ok": true,
+                "op": "select_snapshot",
+                "index": index,
+                "enabled": enabled,
+            })
         }
         Err(e) => usb_err("select_snapshot", e),
     }
@@ -971,6 +1047,7 @@ fn import_preset(
         return usb_err("import_preset", e);
     }
     follow.dirty = true;
+    follow.clear_live();
     if dest_was_loaded {
         follow.remember(setlist, index, Some(name.clone()));
     }
@@ -1044,6 +1121,7 @@ fn move_block(
     ) {
         Ok(_) => {
             follow.dirty = true;
+            follow.clear_live();
             json!({"ok": true, "op": "move_block", "from": from, "to": to})
         }
         Err(e) => usb_err("move_block", e),
@@ -1147,6 +1225,7 @@ fn set_model(
     match result {
         Ok(()) => {
             follow.dirty = true;
+            follow.clear_live();
             let mut body = json!({
                 "ok": true,
                 "op": "set_model",
@@ -1176,6 +1255,7 @@ fn clear_block(
     match session.clear_block(block) {
         Ok(()) => {
             follow.dirty = true;
+            follow.clear_live();
             json!({"ok": true, "op": "clear_block", "block": block})
         }
         Err(e) => usb_err("clear_block", e),
@@ -1216,7 +1296,11 @@ fn write_param(
     Ok(())
 }
 
-fn set_param(session: &mut Session, obj: &serde_json::Map<String, Value>) -> Value {
+fn set_param(
+    session: &mut Session,
+    obj: &serde_json::Map<String, Value>,
+    follow: &mut FollowState,
+) -> Value {
     let (block, param, subslot) = match block_param(obj, "set_param") {
         Ok(v) => v,
         Err(e) => return e,
@@ -1235,15 +1319,31 @@ fn set_param(session: &mut Session, obj: &serde_json::Map<String, Value>) -> Val
         HxValue::F32(wire as f32),
         true,
     ) {
-        Ok(()) => json!({
-            "ok": true, "op": "set_param",
-            "block": block, "param": param, "subslot": subslot, "float": wire,
-        }),
+        Ok(()) => {
+            if let Some(preset) = follow.live.as_mut() {
+                set_slot_param(
+                    preset,
+                    block as usize,
+                    subslot as u8,
+                    param as usize,
+                    wire as f32,
+                );
+            }
+            follow.patch_live();
+            json!({
+                "ok": true, "op": "set_param",
+                "block": block, "param": param, "subslot": subslot, "float": wire,
+            })
+        }
         Err(e) => usb_err("set_param", e),
     }
 }
 
-fn set_bool(session: &mut Session, obj: &serde_json::Map<String, Value>) -> Value {
+fn set_bool(
+    session: &mut Session,
+    obj: &serde_json::Map<String, Value>,
+    follow: &mut FollowState,
+) -> Value {
     let (block, param, subslot) = match block_param(obj, "set_bool") {
         Ok(v) => v,
         Err(e) => return e,
@@ -1252,15 +1352,31 @@ fn set_bool(session: &mut Session, obj: &serde_json::Map<String, Value>) -> Valu
         return err("set_bool", "value must be true or false");
     };
     match write_param(session, block, param, subslot, HxValue::Bool(value), true) {
-        Ok(()) => json!({
-            "ok": true, "op": "set_bool",
-            "block": block, "param": param, "subslot": subslot, "value": value,
-        }),
+        Ok(()) => {
+            if let Some(preset) = follow.live.as_mut() {
+                set_slot_param(
+                    preset,
+                    block as usize,
+                    subslot as u8,
+                    param as usize,
+                    if value { 1.0 } else { 0.0 },
+                );
+            }
+            follow.patch_live();
+            json!({
+                "ok": true, "op": "set_bool",
+                "block": block, "param": param, "subslot": subslot, "value": value,
+            })
+        }
         Err(e) => usb_err("set_bool", e),
     }
 }
 
-fn set_int(session: &mut Session, obj: &serde_json::Map<String, Value>) -> Value {
+fn set_int(
+    session: &mut Session,
+    obj: &serde_json::Map<String, Value>,
+    follow: &mut FollowState,
+) -> Value {
     let (block, param, subslot) = match block_param(obj, "set_int") {
         Ok(v) => v,
         Err(e) => return e,
@@ -1269,15 +1385,31 @@ fn set_int(session: &mut Session, obj: &serde_json::Map<String, Value>) -> Value
         return err("set_int", "value must be an integer 0-128");
     };
     match write_param(session, block, param, subslot, HxValue::Int(value), true) {
-        Ok(()) => json!({
-            "ok": true, "op": "set_int",
-            "block": block, "param": param, "subslot": subslot, "value": value,
-        }),
+        Ok(()) => {
+            if let Some(preset) = follow.live.as_mut() {
+                set_slot_param(
+                    preset,
+                    block as usize,
+                    subslot as u8,
+                    param as usize,
+                    value as f32,
+                );
+            }
+            follow.patch_live();
+            json!({
+                "ok": true, "op": "set_int",
+                "block": block, "param": param, "subslot": subslot, "value": value,
+            })
+        }
         Err(e) => usb_err("set_int", e),
     }
 }
 
-fn set_bypass(session: &mut Session, obj: &serde_json::Map<String, Value>) -> Value {
+fn set_bypass(
+    session: &mut Session,
+    obj: &serde_json::Map<String, Value>,
+    follow: &mut FollowState,
+) -> Value {
     let Some(block) = parse_i64(obj.get("block"), 0, 39) else {
         return err("set_bypass", "block must be an integer 0-39");
     };
@@ -1285,12 +1417,22 @@ fn set_bypass(session: &mut Session, obj: &serde_json::Map<String, Value>) -> Va
         return err("set_bypass", "enabled must be true or false");
     };
     match session.set_enabled(block, enabled) {
-        Ok(()) => json!({"ok": true, "op": "set_bypass", "block": block, "enabled": enabled}),
+        Ok(()) => {
+            if let Some(preset) = follow.live.as_mut() {
+                set_slot_enabled(preset, block as usize, enabled);
+            }
+            follow.patch_live();
+            json!({"ok": true, "op": "set_bypass", "block": block, "enabled": enabled})
+        }
         Err(e) => usb_err("set_bypass", e),
     }
 }
 
-fn set_trails(session: &mut Session, obj: &serde_json::Map<String, Value>) -> Value {
+fn set_trails(
+    session: &mut Session,
+    obj: &serde_json::Map<String, Value>,
+    follow: &mut FollowState,
+) -> Value {
     let Some(block) = parse_i64(obj.get("block"), 0, 39) else {
         return err("set_trails", "block must be an integer 0-39");
     };
@@ -1299,7 +1441,10 @@ fn set_trails(session: &mut Session, obj: &serde_json::Map<String, Value>) -> Va
     };
     // Live Floor: type-30 with key 29 (COMMIT) false is Trails, not a knob write.
     match write_param(session, block, 0, 0, HxValue::Bool(value), false) {
-        Ok(()) => json!({"ok": true, "op": "set_trails", "block": block, "value": value}),
+        Ok(()) => {
+            follow.patch_live();
+            json!({"ok": true, "op": "set_trails", "block": block, "value": value})
+        }
         Err(e) => usb_err("set_trails", e),
     }
 }
@@ -1340,53 +1485,55 @@ fn get_param(
     session: &mut Session,
     catalog: Option<&Catalog>,
     obj: &serde_json::Map<String, Value>,
+    follow: &mut FollowState,
 ) -> Value {
     let (block, param, subslot) = match block_param(obj, "get_param") {
         Ok(v) => v,
         Err(e) => return e,
     };
-    match session.read_preset() {
-        Ok(preset) => match slot_param(&preset, block as usize, subslot as u8, param as usize) {
-            Some(value) => {
-                let mut body = json!({
-                    "ok": true, "op": "get_param",
-                    "block": block, "param": param, "subslot": subslot, "value": value,
-                });
-                if let Some(catalog) = catalog {
-                    if let Some(slot) = preset.slots.get(block as usize) {
-                        let (model, values) = if subslot == 1 {
-                            (slot.paired, slot.paired_values.as_slice())
-                        } else {
-                            (slot.model, slot.values.as_slice())
-                        };
-                        if let Some(n) = model {
-                            if let Some(knob) = knobs_json(catalog, n, values)
-                                .into_iter()
-                                .nth(param as usize)
-                            {
-                                body["name"] = knob["name"].clone();
-                                body["min"] = knob["min"].clone();
-                                body["max"] = knob["max"].clone();
-                                body["kind"] = knob["kind"].clone();
-                                body["usb"] = knob["usb"].clone();
-                                if let Some(label) = knob.get("label") {
-                                    body["label"] = label.clone();
-                                }
-                                if let Some(format) = knob.get("format") {
-                                    body["format"] = format.clone();
-                                }
-                                if let Some(choices) = knob.get("choices") {
-                                    body["choices"] = choices.clone();
-                                }
+    if let Err(e) = ensure_live(session, follow, "get_param") {
+        return e;
+    }
+    let preset = follow.live.as_ref().unwrap();
+    match slot_param(preset, block as usize, subslot as u8, param as usize) {
+        Some(value) => {
+            let mut body = json!({
+                "ok": true, "op": "get_param",
+                "block": block, "param": param, "subslot": subslot, "value": value,
+            });
+            if let Some(catalog) = catalog {
+                if let Some(slot) = preset.slots.get(block as usize) {
+                    let (model, values) = if subslot == 1 {
+                        (slot.paired, slot.paired_values.as_slice())
+                    } else {
+                        (slot.model, slot.values.as_slice())
+                    };
+                    if let Some(n) = model {
+                        if let Some(knob) = knobs_json(catalog, n, values)
+                            .into_iter()
+                            .nth(param as usize)
+                        {
+                            body["name"] = knob["name"].clone();
+                            body["min"] = knob["min"].clone();
+                            body["max"] = knob["max"].clone();
+                            body["kind"] = knob["kind"].clone();
+                            body["usb"] = knob["usb"].clone();
+                            if let Some(label) = knob.get("label") {
+                                body["label"] = label.clone();
+                            }
+                            if let Some(format) = knob.get("format") {
+                                body["format"] = format.clone();
+                            }
+                            if let Some(choices) = knob.get("choices") {
+                                body["choices"] = choices.clone();
                             }
                         }
                     }
                 }
-                body
             }
-            None => err("get_param", "parameter missing in preset document"),
-        },
-        Err(e) => usb_err("get_param", e),
+            body
+        }
+        None => err("get_param", "parameter missing in preset document"),
     }
 }
 
@@ -1488,45 +1635,90 @@ fn list_models(catalog: Option<&Catalog>) -> Value {
     })
 }
 
-fn get_state(session: &mut Session, catalog: Option<&Catalog>, follow: &mut FollowState) -> Value {
-    // FETCH_PRESET (opcode 4) is the slot read HX Edit uses for backup; it
-    // answers in tens of milliseconds on a desktop host. READ_PRESET (22) dumps
-    // the live edit buffer as a long 256-byte stream. On ESP32-P4 that stream
-    // has been stalling the HTTP worker for ~30s and dropping the WebSocket.
-    match session.preset_info() {
-        Ok((sl, idx, name)) => {
-            follow.remember(sl, idx, Some(name.clone()));
-            match session.read_preset_at(sl, idx) {
-                Ok(Some(preset)) => {
-                    if catalog.is_some() && follow.irs.is_none() {
-                        if let Ok(rows) = session.irs() {
-                            follow.irs = Some(rows);
-                        }
-                    }
-                    let mut body = topology_from_preset(&preset, catalog, follow.irs.as_deref());
-                    body["ok"] = json!(true);
-                    body["op"] = json!("get_state");
-                    body["catalog"] = json!(catalog.is_some());
-                    body["setlist"] = json!(sl);
-                    body["index"] = json!(idx);
-                    body["name"] = json!(name);
-                    body
+fn get_state(
+    session: &mut Session,
+    catalog: Option<&Catalog>,
+    follow: &mut FollowState,
+    obj: &serde_json::Map<String, Value>,
+) -> Value {
+    // READ_PRESET (22) is the live edit buffer. FETCH_PRESET (4) is the last
+    // saved slot and will make the editor snap back. Cache the live document
+    // so snapshot/bypass/knob writes are not blocked by a ~2 s dump on P4.
+    let refresh = obj.get("refresh").and_then(Value::as_bool) == Some(true);
+    if !refresh && follow.live.is_some() {
+        return state_body(follow, catalog, true);
+    }
+    let gen = follow.live_gen;
+    match session.read_preset() {
+        Ok(preset) => {
+            if catalog.is_some() && follow.irs.is_none() {
+                if let Ok(rows) = session.irs() {
+                    follow.irs = Some(rows);
                 }
-                Ok(None) => json!({
-                    "ok": true,
-                    "op": "get_state",
-                    "catalog": catalog.is_some(),
-                    "setlist": sl,
-                    "index": idx,
-                    "name": name,
-                    "blocks": [],
-                    "paths": [],
-                }),
-                Err(e) => usb_err("get_state", e),
             }
+            let _ = remember_info(session, follow);
+            if follow.live_gen != gen && follow.live.is_some() {
+                return state_body(follow, catalog, true);
+            }
+            follow.live = Some(preset);
+            follow.bump_live();
+            state_body(follow, catalog, false)
         }
         Err(e) => usb_err("get_state", e),
     }
+}
+
+fn ensure_live(session: &mut Session, follow: &mut FollowState, op: &str) -> Result<(), Value> {
+    if follow.live.is_some() {
+        return Ok(());
+    }
+    match session.read_preset() {
+        Ok(preset) => {
+            follow.live = Some(preset);
+            follow.bump_live();
+            Ok(())
+        }
+        Err(e) => Err(usb_err(op, e)),
+    }
+}
+
+fn state_body(follow: &FollowState, catalog: Option<&Catalog>, cached: bool) -> Value {
+    let preset = follow.live.as_ref().unwrap();
+    let mut body = topology_from_preset(preset, catalog, follow.irs.as_deref());
+    body["ok"] = json!(true);
+    body["op"] = json!("get_state");
+    body["catalog"] = json!(catalog.is_some());
+    body["cached"] = json!(cached);
+    if let Some(sl) = follow.setlist {
+        body["setlist"] = json!(sl);
+    }
+    if let Some(idx) = follow.index {
+        body["index"] = json!(idx);
+    }
+    if let Some(name) = &follow.name {
+        body["name"] = json!(name);
+    }
+    body["live_gen"] = json!(follow.live_gen);
+    body
+}
+
+pub fn state_from_clone(clone: &LiveClone, catalog: Option<&Catalog>, cached: bool) -> Value {
+    let mut body = topology_from_preset(&clone.preset, catalog, clone.irs.as_deref());
+    body["ok"] = json!(true);
+    body["op"] = json!("get_state");
+    body["catalog"] = json!(catalog.is_some());
+    body["cached"] = json!(cached);
+    body["live_gen"] = json!(clone.gen);
+    if let Some(sl) = clone.setlist {
+        body["setlist"] = json!(sl);
+    }
+    if let Some(idx) = clone.index {
+        body["index"] = json!(idx);
+    }
+    if let Some(name) = &clone.name {
+        body["name"] = json!(name);
+    }
+    body
 }
 
 fn topology(session: &mut Session, catalog: Option<&Catalog>) -> Value {

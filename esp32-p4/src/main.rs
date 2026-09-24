@@ -569,6 +569,27 @@ fn start_usb_op_worker() {
     }
 }
 
+fn cached_get_state() -> Option<Value> {
+    for _ in 0..8 {
+        let clone = {
+            let b = bridge().lock().unwrap_or_else(|e| e.into_inner());
+            b.follow.clone_live()?
+        };
+        let gen = clone.gen;
+        let cat = catalog_slot().lock().unwrap_or_else(|e| e.into_inner());
+        let body = ops::state_from_clone(&clone, cat.as_ref(), true);
+        drop(cat);
+        let still = {
+            let b = bridge().lock().unwrap_or_else(|e| e.into_inner());
+            b.follow.live_gen() == gen
+        };
+        if still {
+            return Some(body);
+        }
+    }
+    None
+}
+
 fn run_on_usb_op(cmd: Value) -> String {
     let tx = usb_op_tx()
         .lock()
@@ -595,9 +616,19 @@ pub extern "C" fn hxbridge_handle_json(json: *const c_char, json_len: c_int) -> 
     let text = match serde_json::from_slice::<Value>(bytes) {
         Ok(cmd) => {
             let op = cmd.get("op").and_then(Value::as_str).unwrap_or("");
-            // LIST_PRESETS / FETCH_PRESET build a large Value tree. Decode and
-            // JSON serialize on a persistent usb-op worker so httpd does not
-            // allocate a second large stack (that ENOMEM skipped get_state).
+            let refresh = cmd.get("refresh").and_then(Value::as_bool) == Some(true);
+            // Cache hit: clone the live document, drop the USB lock, then build
+            // JSON. Holding the lock for topology JSON blocked set_bypass for ~1s
+            // and let a stale get_state paint over the editor.
+            if op == "get_state" && !refresh {
+                if let Some(mut body) = cached_get_state() {
+                    if let Some(id) = cmd.get("id").cloned() {
+                        body["id"] = id;
+                    }
+                    let text = body.to_string();
+                    return CString::new(text.replace('\0', "")).unwrap().into_raw();
+                }
+            }
             let heavy = matches!(
                 op,
                 "list_presets"

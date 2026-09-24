@@ -1,4 +1,5 @@
 use hx_catalog::{Catalog, Kind as ParamKind};
+use hx_proto::msgpack::{Key, Value as HxValue};
 use hx_proto::preset::{Kind, Layout, Preset};
 use serde_json::{json, Value};
 
@@ -367,6 +368,56 @@ fn current_snapshot(preset: &Preset) -> Option<i64> {
         .and_then(|v| v.as_i64())
 }
 
+/// Apply a snapshot's bypass map to the cached live document.
+///
+/// Snapshot-assigned knobs still need a later READ_PRESET. Bypass and the
+/// current index are enough for the editor not to bounce after opcode 88.
+pub fn apply_snapshot(preset: &mut Preset, index: i64) -> bool {
+    if !(0..=7).contains(&index) {
+        return false;
+    }
+    let enabled = {
+        let details = preset.snapshot_details();
+        let Some(snap) = details.get(index as usize) else {
+            return false;
+        };
+        snap.enabled.clone()
+    };
+    for (i, on) in enabled.iter().enumerate() {
+        if let (Some(slot), Some(flag)) = (preset.slots.get_mut(i), *on) {
+            slot.enabled = flag;
+        }
+    }
+    if let Some(section) = preset.tone.get_mut(10) {
+        if let Some(cur) = section.get_mut(6) {
+            *cur = HxValue::Int(index);
+        } else if let HxValue::Map(pairs) = section {
+            pairs.push((Key::Int(6), HxValue::Int(index)));
+        }
+    }
+    true
+}
+
+pub fn set_slot_enabled(preset: &mut Preset, block: usize, enabled: bool) {
+    if let Some(slot) = preset.slots.get_mut(block) {
+        slot.enabled = enabled;
+    }
+}
+
+pub fn set_slot_param(preset: &mut Preset, block: usize, subslot: u8, param: usize, value: f32) {
+    let Some(slot) = preset.slots.get_mut(block) else {
+        return;
+    };
+    let values = if subslot == 1 {
+        &mut slot.paired_values
+    } else {
+        &mut slot.values
+    };
+    if let Some(v) = values.get_mut(param) {
+        *v = value;
+    }
+}
+
 pub fn slot_param(preset: &Preset, block: usize, subslot: u8, param: usize) -> Option<Value> {
     let slot = preset.slots.get(block)?;
     let values = if subslot == 1 {
@@ -398,6 +449,24 @@ mod tests {
         assert!(topo["paths"][0].get("head").is_some());
         assert!(topo["paths"][0].get("lanes").is_some());
         assert_eq!(topo["snapshot"], 0);
+    }
+
+    #[test]
+    fn apply_snapshot_updates_index_and_bypasses() {
+        let preset = Preset::parse(PRESET).expect("stomp fixture");
+        let details = preset.snapshot_details();
+        if details.len() < 2 {
+            return;
+        }
+        let want = details[1].enabled.clone();
+        let mut live = preset;
+        assert!(apply_snapshot(&mut live, 1));
+        assert_eq!(current_snapshot(&live), Some(1));
+        for (i, on) in want.iter().enumerate() {
+            if let Some(flag) = *on {
+                assert_eq!(live.slots[i].enabled, flag);
+            }
+        }
     }
 
     #[test]

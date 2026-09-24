@@ -199,4 +199,6 @@ ToneRelay stands on work that other people published first. Thank you.
 MIT. See [LICENSE](LICENSE).
 
 Lab notes, GATT details, and capture recipes are in
-[docs/development.md](docs/development.md).
+[docs/development.md](docs/development.md). A KiCad packet for a battery-powered
+ESP32-P4 gadget (USB HS host + C6 radio) is in
+[docs/hardware/README.md](docs/hardware/README.md).

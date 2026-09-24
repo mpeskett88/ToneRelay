@@ -53,3 +53,7 @@ Plug the Helix into the P4 **USB-A** port. After setup, the editor shows a modal
 ## BLE
 
 The peripheral name is **ToneRelay**, with the same service/characteristic UUIDs and 160-byte chunk framing as the Pi `gatt_server.py`. Pairing is not required (same lab policy as the Pi).
+
+## Custom PCB
+
+A KiCad handoff for a battery-powered board that keeps this firmware's SDIO/USB pin map is in [docs/hardware/README.md](../docs/hardware/README.md).
