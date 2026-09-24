@@ -1,0 +1,13 @@
+[Unit]
+Description=ToneRelay Bluetooth pairing agent
+After=bluetooth.service
+Requires=bluetooth.service
+
+[Service]
+Type=simple
+ExecStart=__HXBRIDGE_ROOT__/scripts/bt-agent.sh
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=bluetooth.target

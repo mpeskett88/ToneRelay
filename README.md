@@ -32,6 +32,7 @@ all risk. Back up your presets before you write to the device.
 * Drag and Drop blocks (with the same path)
 * Full parameter editing
 * Parametric EQ graph
+* Stereo playback from an iPhone into Helix USB 1/2, over AirPlay or Bluetooth
 
 ## Future Features/Ideas
 
@@ -41,7 +42,6 @@ all risk. Back up your presets before you write to the device.
 * User Favourites
 * Download/Upload/Manage HLX and IR files
 * Alternate GUIs for EQs, Compressors and other blocks
-* Stereo audio playback via AirPlay or Bluetooth
 * Focus View (from Helix Stadium) adaptation
 
 ## Background

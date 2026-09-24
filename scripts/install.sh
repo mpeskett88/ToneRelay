@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Install ToneRelay on a Raspberry Pi: USB daemon + HTTP GUI.
+# Install ToneRelay on a Raspberry Pi: USB daemon, HTTP GUI, and
+# AirPlay/Bluetooth playback into Helix USB 1/2.
 # Run as: sudo ./scripts/install.sh
 set -euo pipefail
 
@@ -14,7 +15,8 @@ MSRV=1.87.0
 
 usage() {
   cat <<'EOF'
-Install ToneRelay (USB daemon + HTTP editor) on this Raspberry Pi.
+Install ToneRelay (USB daemon, HTTP editor, AirPlay and Bluetooth playback)
+on this Raspberry Pi.
 
 Usage:
   sudo ./scripts/install.sh
@@ -23,7 +25,7 @@ Usage:
 
 Options:
   --port N       HTTP listen port (default: 80, then 8080 if 80 is taken)
-  --uninstall    Stop services and remove units, udev, Avahi, and /etc/hxbridge.conf
+  --uninstall    Stop services and remove units, udev, Avahi, audio config, and /etc/hxbridge.conf
   -h, --help     Show this help
 
 Environment:
@@ -201,7 +203,10 @@ uninstall() {
   systemctl stop hxbridge-usb.service 2>/dev/null || true
   systemctl disable hxbridge-http.service 2>/dev/null || true
   systemctl disable hxbridge-usb.service 2>/dev/null || true
+  systemctl disable --now shairport-sync.service hxbridge-bt-agent.service bluealsa-aplay.service bluealsa.service 2>/dev/null || true
   rm -f "$USB_UNIT" "$HTTP_UNIT" "$UDEV_DEST" "$AVAHI_DEST" "$CONF_PATH"
+  rm -f /etc/systemd/system/hxbridge-bt-agent.service /etc/asound.conf /etc/shairport-sync.conf
+  rm -rf /etc/systemd/system/bluealsa-aplay.service.d
   udevadm control --reload-rules 2>/dev/null || true
   if command -v systemctl >/dev/null; then
     systemctl daemon-reload
@@ -277,6 +282,9 @@ install_apt() {
     avahi-daemon
     libnss-mdns
     xz-utils
+    shairport-sync
+    bluez-alsa-utils
+    libasound2-plugins
   )
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y
@@ -483,6 +491,22 @@ install_udev() {
   log "Installed udev rule. Unplug and replug the Helix if it is already connected."
 }
 
+install_audio() {
+  local dropin=/etc/systemd/system/bluealsa-aplay.service.d
+  install -m 644 "$SCRIPT_DIR/asound-helix.conf" /etc/asound.conf
+  install -m 644 "$SCRIPT_DIR/shairport-sync.conf" /etc/shairport-sync.conf
+  install -d "$dropin"
+  install -m 644 "$SCRIPT_DIR/bluealsa-aplay.helix.conf" "$dropin/helix.conf"
+  chmod 755 "$SCRIPT_DIR/bt-agent.sh"
+  render_file "$SCRIPT_DIR/hxbridge-bt-agent.service" /etc/systemd/system/hxbridge-bt-agent.service
+  systemctl daemon-reload
+  systemctl enable avahi-daemon.service
+  systemctl enable shairport-sync.service bluealsa.service bluealsa-aplay.service hxbridge-bt-agent.service
+  systemctl restart shairport-sync.service bluealsa.service bluealsa-aplay.service hxbridge-bt-agent.service
+  log "AirPlay and Bluetooth both appear as ToneRelay and play into Helix USB 1/2."
+  log "Only one of them can play at a time."
+}
+
 install_units() {
   render_file "$SCRIPT_DIR/hxbridge-usb.service" "$USB_UNIT"
   render_file "$SCRIPT_DIR/hxbridge-http.service" "$HTTP_UNIT"
@@ -551,5 +575,6 @@ ensure_submodule
 build_all
 install_catalog
 install_udev
+install_audio
 install_units
 print_urls
