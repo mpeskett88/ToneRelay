@@ -32,7 +32,7 @@ all risk. Back up your presets before you write to the device.
 * Drag and Drop blocks (with the same path)
 * Full parameter editing
 * Parametric EQ graph
-* Stereo playback from an iPhone into Helix USB 1/2, over AirPlay or Bluetooth
+* Stereo playback from an iPhone into Helix USB 1/2, over AirPlay or Bluetooth (beta)
 
 ## Future Features/Ideas
 
