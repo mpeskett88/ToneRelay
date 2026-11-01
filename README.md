@@ -33,6 +33,7 @@ all risk. Back up your presets before you write to the device.
 * Full parameter editing
 * Parametric EQ graph
 * Stereo playback from an iPhone into Helix USB 1/2, over AirPlay or Bluetooth (beta)
+* Bluetooth MIDI input on the ESP32-P4 board, forwarded to the pedal over USB, so an app such as OnSong can change presets without a cable (optional, see [docs/ble-midi.md](docs/ble-midi.md))
 
 ## Future Features/Ideas
 

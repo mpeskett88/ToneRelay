@@ -7,6 +7,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs_flash.h"
+#include "sdkconfig.h"
 
 #define TAG "tonerelay"
 
@@ -107,6 +108,7 @@ void tonerelay_start(void)
     ESP_ERROR_CHECK(err);
 
     helix_usb_start();
+    tonerelay_usb_midi_start();
     tonerelay_catalog_start();
     /* Hosted SDIO is prio 23. Give the USB host task time to debounce/enumerate
      * the already-plugged Helix before C6 traffic starts. */
@@ -118,7 +120,11 @@ void tonerelay_start(void)
     tonerelay_http_start();
     /* C6 2.12.13 VHCI does not answer HCI reset; NimBLE then retries every 2s
      * and starves httpd. Wi-Fi GUI still works. Re-enable when C6 HCI works. */
+#if CONFIG_TONERELAY_BLE_MIDI
+    tonerelay_midi_ble_start();
+#else
     ESP_LOGW(TAG, "BLE skipped (C6 HCI unresponsive)");
+#endif
     xTaskCreate(console_task, "console", 4096, NULL, 1, NULL);
     ESP_LOGI(TAG, "ToneRelay P4 started");
 }
