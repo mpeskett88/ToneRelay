@@ -102,6 +102,7 @@ void tonerelay_ble_start(void);
 void tonerelay_midi_ble_start(void);
 bool tonerelay_midi_ble_up(void);
 void tonerelay_midi_set_sink(void (*sink)(const uint8_t *bytes, size_t n));
+void tonerelay_midi_ble_forget_bonds(void); /* forgets every paired phone and tablet (the factory reset calls it) */
 
 /* MIDI to the pedal over its USB MIDI interface (usb_midi.c). Start it after helix_usb_start(); it needs no Helrig session. */
 void tonerelay_usb_midi_start(void);

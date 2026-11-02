@@ -318,10 +318,19 @@ void tonerelay_midi_ble_start(void)
     nimble_port_freertos_init(host_task);
 }
 
+/* Forgets every bond (the keys of each paired phone and tablet), in the store the bonds are kept in, so a box that is handed on no
+ * longer trusts them. The phone or tablet keeps its own side: it has to forget the box too, then pair again. */
+void tonerelay_midi_ble_forget_bonds(void)
+{
+    int rc = ble_store_clear();
+    ESP_LOGW(TAG, "Bluetooth pairings erased rc=%d", rc);
+}
+
 #else /* !CONFIG_TONERELAY_BLE_MIDI */
 
 void tonerelay_midi_ble_start(void) {}
 bool tonerelay_midi_ble_up(void) { return false; }
 void tonerelay_midi_set_sink(void (*sink)(const uint8_t *bytes, size_t n)) { (void)sink; }
+void tonerelay_midi_ble_forget_bonds(void) {}
 
 #endif

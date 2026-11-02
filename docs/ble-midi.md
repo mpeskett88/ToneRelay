@@ -45,6 +45,7 @@ pedal; when it does not keep up, new messages are dropped.
 
 * **Anyone in Bluetooth range can pair.** "Just Works" pairing stops eavesdropping on a pairing that already exists, not a stranger who pairs first.
   There is no pairing window yet. Do not use it where a stranger sending MIDI to the pedal matters.
+* A factory reset (BOOT held for 5 seconds) forgets every pairing. The phone or tablet keeps its own side, so it has to forget the box too before it pairs again.
 * One direction only: the pedal's MIDI output is read and dropped, not sent to the phone.
 * Cable number 0 only.
 * Tried with an HX Stomp (USB MIDI is interface 4, endpoints `0x02` and `0x82`). Other Helix and HX pedals should have the same interface, but have not been
