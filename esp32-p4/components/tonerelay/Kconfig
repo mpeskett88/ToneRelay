@@ -1,0 +1,19 @@
+menu "ToneRelay"
+
+    config TONERELAY_BLE_MIDI
+        bool "BLE MIDI input"
+        default n
+        depends on BT_NIMBLE_ENABLED
+        help
+            Advertise a Bluetooth LE MIDI service, so a phone, tablet or DAW can send MIDI to the box (the way a WIDI Jack receives it).
+            The box forwards it to the pedal's USB MIDI interface. See docs/ble-midi.md. Enable it with sdkconfig.midi.defaults.
+
+    config TONERELAY_BLE_MIDI_ENCRYPT
+        bool "Require an encrypted link for BLE MIDI"
+        default y
+        depends on TONERELAY_BLE_MIDI
+        help
+            The phone pairs ("Just Works") the first time it talks to the box and the pairing is kept. Turn this off only to test:
+            anyone in range can then send MIDI to the box without pairing.
+
+endmenu

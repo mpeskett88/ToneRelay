@@ -97,6 +97,18 @@ void tonerelay_relay_pair_press(void); /* a short press of BOOT: confirms an ope
 void tonerelay_relay_token(char *out, size_t cap); /* the box's token (32 hex characters); see relay.c */
 void tonerelay_ble_start(void);
 
+/* BLE MIDI input (CONFIG_TONERELAY_BLE_MIDI; without it these do nothing). MIDI bytes written by a phone or DAW reach the sink, which
+ * logs them until a destination is set. */
+void tonerelay_midi_ble_start(void);
+bool tonerelay_midi_ble_up(void);
+void tonerelay_midi_set_sink(void (*sink)(const uint8_t *bytes, size_t n));
+void tonerelay_midi_ble_forget_bonds(void); /* forgets every paired phone and tablet (the factory reset calls it) */
+
+/* MIDI to the pedal over its USB MIDI interface (usb_midi.c). Start it after helix_usb_start(); it needs no Helrig session. */
+void tonerelay_usb_midi_start(void);
+bool tonerelay_usb_midi_ready(void);
+void tonerelay_usb_midi_send(const uint8_t *bytes, size_t n);
+
 #ifdef __cplusplus
 }
 #endif

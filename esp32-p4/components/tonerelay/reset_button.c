@@ -1,6 +1,6 @@
 /*
  * Factory reset by long press: hold the board's BOOT button for 5 seconds while the box is running and it forgets its Wi-Fi
- * network and hotspot password, then restarts and raises its open setup network, as a new box does. The catalog on flash is kept.
+ * networks, hotspot password, token and (with Bluetooth MIDI built in) every Bluetooth pairing, then restarts and raises its open setup network, as a new box does. The catalog on flash is kept.
  * A short press does nothing, except that it confirms an open pairing window (relay.c).
  *
  * BOOT is the chip's download-strap pin (GPIO35 on the ESP32-P4). Once the application runs it is an ordinary input. Holding
@@ -55,6 +55,7 @@ static void reset_task(void *arg)
         } else if (now - down_at >= HOLD_US) {
             ESP_LOGW(TAG, "held for 5 s: factory reset");
             tonerelay_wifi_factory_reset();
+            tonerelay_midi_ble_forget_bonds();
             vTaskDelay(pdMS_TO_TICKS(300));
             esp_restart();
         }
