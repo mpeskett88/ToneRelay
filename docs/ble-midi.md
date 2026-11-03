@@ -24,8 +24,8 @@ When the box starts it logs `BLE MIDI starting` and `advertising MIDI as <name>`
 
 Use Apple's own list of Bluetooth MIDI devices: Audio MIDI Setup on a Mac (Window, Show MIDI Studio, Bluetooth), or any iPad app that shows it, such
 as AUM. The box is then a MIDI destination for every app on that device. An app's own Bluetooth connect button may not get the box connected: OnSong's
-did not on the bench, though OnSong showed the box connected as soon as the list had connected it. An app can make the same connection with
-`MIDIBluetoothDriverActivateAllConnections` (iOS 16 and later), as `MIDIBluetoothConnection.h` describes.
+did not on the bench, though OnSong showed the box connected as soon as the list had connected it. An app cannot rely on
+`MIDIBluetoothDriverActivateAllConnections` (iOS 16 and later) to make the same connection: on the iPad it failed with CoreMIDI errors -304 and -10833.
 
 Apple's MIDI stack sends a MIDI-CI Discovery message when a device connects and holds data back, or gives up, until it is answered. The box answers
 it with a reply that supports no MIDI-CI features, and does not pass MIDI-CI messages on to the pedal.

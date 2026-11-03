@@ -37,8 +37,9 @@ static volatile bool s_ready;
 static volatile bool s_gone;
 static volatile bool s_scan;
 static volatile uint8_t s_open_addr;
-static volatile bool s_in_active;
-static volatile bool s_out_pending;
+static volatile int s_in_flight; /* submitted IN transfers whose callback has not run yet */
+static volatile int s_out_flight;
+static bool s_close_pending; /* close_dev left the device, interface and transfers in place because some were still in flight */
 static SemaphoreHandle_t s_out_done;
 static SemaphoreHandle_t s_enc_mu;
 static QueueHandle_t s_q; /* 4-byte USB-MIDI packets waiting to go out */
@@ -47,15 +48,16 @@ static usbmidi_enc_t s_enc;
 static void out_cb(usb_transfer_t *x)
 {
     (void)x;
+    __atomic_fetch_sub(&s_out_flight, 1, __ATOMIC_SEQ_CST);
     xSemaphoreGive(s_out_done);
 }
 
 static void in_cb(usb_transfer_t *x)
 {
     if (x->status == USB_TRANSFER_STATUS_COMPLETED && s_ready && usb_host_transfer_submit(x) == ESP_OK) {
-        return; /* what the pedal sent is dropped, and the next read is posted */
+        return; /* what the pedal sent is dropped, and the next read is posted (still in flight) */
     }
-    s_in_active = false;
+    __atomic_fetch_sub(&s_in_flight, 1, __ATOMIC_SEQ_CST);
 }
 
 static void client_event(const usb_host_client_event_msg_t *msg, void *arg)
@@ -111,23 +113,36 @@ static bool find_midi(const usb_config_desc_t *cfg)
     return found && s_ep_out != 0;
 }
 
-static void close_dev(void)
+/* Releases the interface, closes the device and frees the transfers, once none of them is in flight: freeing one the host stack still
+ * owns asserts in hcd_urb_dequeue and resets the chip. Waits up to wait_ms for the callbacks. If some have not run, nothing is changed,
+ * s_close_pending stays set and the worker calls this again. Same rule as finish_close in usb.c. */
+static void close_dev(int wait_ms)
 {
     s_ready = false;
     if (!s_dev) {
         return;
     }
-    if (s_ep_out) {
-        usb_host_endpoint_halt(s_dev, s_ep_out);
-        usb_host_endpoint_flush(s_dev, s_ep_out);
+    if (!s_close_pending) {
+        if (s_ep_out) {
+            usb_host_endpoint_halt(s_dev, s_ep_out);
+            usb_host_endpoint_flush(s_dev, s_ep_out);
+        }
+        if (s_ep_in) {
+            usb_host_endpoint_halt(s_dev, s_ep_in);
+            usb_host_endpoint_flush(s_dev, s_ep_in);
+        }
     }
-    if (s_ep_in) {
-        usb_host_endpoint_halt(s_dev, s_ep_in);
-        usb_host_endpoint_flush(s_dev, s_ep_in);
-    }
-    for (int i = 0; i < 100 && (s_in_active || s_out_pending); i++) {
+    for (int waited = 0; (s_in_flight > 0 || s_out_flight > 0) && waited < wait_ms; waited += 10) {
         vTaskDelay(pdMS_TO_TICKS(10));
     }
+    if (s_in_flight > 0 || s_out_flight > 0) {
+        if (!s_close_pending) {
+            ESP_LOGW(TAG, "close: %d IN and %d OUT still in flight, finishing later", s_in_flight, s_out_flight);
+        }
+        s_close_pending = true;
+        return;
+    }
+    s_close_pending = false;
     if (s_xout) {
         usb_host_transfer_free(s_xout);
         s_xout = NULL;
@@ -178,9 +193,9 @@ static void try_open(uint8_t addr)
         s_xin->callback = in_cb;
         s_xin->context = NULL;
         s_ready = true;
-        s_in_active = true;
+        __atomic_fetch_add(&s_in_flight, 1, __ATOMIC_SEQ_CST);
         if (usb_host_transfer_submit(s_xin) != ESP_OK) {
-            s_in_active = false;
+            __atomic_fetch_sub(&s_in_flight, 1, __ATOMIC_SEQ_CST);
         }
     }
     s_ready = true;
@@ -206,7 +221,9 @@ static void worker(void *arg)
     while (true) {
         if (s_gone) {
             s_gone = false;
-            close_dev();
+            close_dev(1000);
+        } else if (s_close_pending) {
+            close_dev(0);
         }
         if (s_scan) {
             s_scan = false;
@@ -220,9 +237,10 @@ static void worker(void *arg)
         if (xQueueReceive(s_q, pkt, pdMS_TO_TICKS(100)) != pdTRUE) {
             continue;
         }
-        if (!s_ready || !s_xout) {
-            continue; /* no pedal: the message is dropped */
+        if (!s_ready || !s_xout || s_out_flight > 0) {
+            continue; /* no pedal, or the last send has not come back: the message is dropped */
         }
+        xSemaphoreTake(s_out_done, 0);
         size_t n = 4;
         memcpy(s_xout->data_buffer, pkt, 4);
         while (n + 4 <= OUT_PACKETS * 4 && xQueueReceive(s_q, s_xout->data_buffer + n, 0) == pdTRUE) {
@@ -233,10 +251,10 @@ static void worker(void *arg)
         s_xout->num_bytes = (int)n;
         s_xout->callback = out_cb;
         s_xout->context = NULL;
-        s_out_pending = true;
+        __atomic_fetch_add(&s_out_flight, 1, __ATOMIC_SEQ_CST);
         esp_err_t err = usb_host_transfer_submit(s_xout);
         if (err != ESP_OK) {
-            s_out_pending = false;
+            __atomic_fetch_sub(&s_out_flight, 1, __ATOMIC_SEQ_CST);
             ESP_LOGW(TAG, "submit: %s", esp_err_to_name(err));
             continue;
         }
@@ -247,8 +265,7 @@ static void worker(void *arg)
             xSemaphoreTake(s_out_done, pdMS_TO_TICKS(500));
             usb_host_endpoint_clear(s_dev, s_ep_out);
         }
-        s_out_pending = false;
-        if (s_xout->status != USB_TRANSFER_STATUS_COMPLETED) {
+        if (s_out_flight == 0 && s_xout->status != USB_TRANSFER_STATUS_COMPLETED) {
             ESP_LOGW(TAG, "send status %d", (int)s_xout->status);
         }
     }
