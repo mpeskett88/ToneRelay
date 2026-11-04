@@ -3,6 +3,7 @@
 An optional input for the ESP32-P4 firmware: the box shows up as a Bluetooth LE MIDI device, the way a WIDI Jack does, and forwards what it
 receives to the pedal's USB MIDI interface. A phone, tablet or DAW (OnSong, AUM, Audio MIDI Setup) can then send program changes, MIDI clock
 and notes to a Helix or HX pedal through the box, with no MIDI cable. The pedal's own MIDI Thru passes it on to other pedals.
+What the pedal sends back (a preset or snapshot change made on its footswitches) goes to the phone or tablet as Bluetooth MIDI notifications.
 
 It is off unless you build it in, and nothing else in the firmware depends on it.
 
@@ -35,18 +36,23 @@ it with a reply that supports no MIDI-CI features, and does not pass MIDI-CI mes
 | Part | File | |
 |---|---|---|
 | BLE MIDI service `03B80E5A-EDE8-4B33-A751-6CE34EC4C700`, one characteristic `7772E5DB-3868-4112-A1A9-F2669D106BF3` (read, write, write without response, notify) | `midi_ble.c` | Advertising, pairing and bonding ("Just Works"), connection interval 11.25 to 15 ms. It keeps advertising while one phone is connected, so a second one could connect (not tried). |
-| BLE MIDI packet parser, MIDI-CI Discovery reply, MIDI to USB-MIDI packet encoder | `blemidi.c` | No ESP-IDF code: `test/blemidi_test.c` runs on a computer (`cc -I.. -o blemidi_test blemidi_test.c ../blemidi.c`). |
-| USB MIDI to the pedal | `usb_midi.c` | A second USB client. It finds the MIDI streaming interface (class 1, subclass 3) in the active configuration of a Line 6 device and claims it, so it works with or without a Helix session open. It reads and drops what the pedal sends back. |
+| BLE MIDI packet parser, MIDI-CI Discovery reply, MIDI to USB-MIDI packet encoder, USB-MIDI to BLE MIDI packet encoder | `blemidi.c` | No ESP-IDF code: `test/blemidi_test.c` runs on a computer (`cc -I.. -o blemidi_test blemidi_test.c ../blemidi.c`). |
+| USB MIDI to the pedal | `usb_midi.c` | A second USB client. It finds the MIDI streaming interface (class 1, subclass 3) in the active configuration of a Line 6 device and claims it, so it works with or without a Helix session open. It also reads the pedal's MIDI output and hands its channel messages to `midi_ble.c`. |
 
 Messages pass through unchanged, including MIDI clock and SysEx, also when a SysEx is split over several packets (the host test covers that; the bench only sent clock, program changes and notes). Up to 512 USB-MIDI packets wait for the
 pedal; when it does not keep up, new messages are dropped.
+
+From the pedal to the phone, only channel messages (program change, control change, notes) are sent, in as few notifications as the link's MTU allows, and only
+while the phone has subscribed to notifications. SysEx, clock and other system messages from the pedal are not sent. The HX Stomp sends back what it is sent
+on its USB MIDI output, like a MIDI Thru, so the box remembers each packet it sends to the pedal for 400 ms and drops the same packet coming back; without
+that, the phone hears its own messages. A pedal message identical to one just sent within that time is dropped too.
 
 ## Limits
 
 * **Anyone in Bluetooth range can pair.** "Just Works" pairing stops eavesdropping on a pairing that already exists, not a stranger who pairs first.
   There is no pairing window yet. Do not use it where a stranger sending MIDI to the pedal matters.
 * A factory reset (BOOT held for 5 seconds) forgets every pairing. The phone or tablet keeps its own side, so it has to forget the box too before it pairs again.
-* One direction only: the pedal's MIDI output is read and dropped, not sent to the phone.
+* From the pedal to the phone, channel messages only (see above). An HX Stomp sends program changes on its MIDI channel and snapshot changes as control change 69.
 * Cable number 0 only.
 * Tried with an HX Stomp (USB MIDI is interface 4, endpoints `0x02` and `0x82`). Other Helix and HX pedals should have the same interface, but have not been
   tried.
@@ -56,4 +62,4 @@ pedal; when it does not keep up, new messages are dropped.
 ## Tested
 
 On a Waveshare ESP32-P4-NANO with an HX Stomp, an iPad (OnSong, AUM) and a Mac (Audio MIDI Setup): connecting and pairing, MIDI-CI discovery, MIDI clock,
-program changes and notes arriving, a preset change on the pedal from OnSong, the pedal's MIDI Thru reaching other pedals, and a Helix session open at the same time.
+program changes and notes arriving, a preset change on the pedal from OnSong, the pedal's own preset and snapshot changes arriving on an iPhone (program change and control change 69, channel 7), the pedal's MIDI Thru reaching other pedals, and a Helix session open at the same time.
