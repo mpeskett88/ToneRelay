@@ -40,6 +40,7 @@ static uint16_t s_chr_handle;
 static uint8_t s_own_addr_type;
 static bool s_up;
 static uint16_t s_conn = BLE_HS_CONN_HANDLE_NONE;
+static uint16_t s_notify_conn = BLE_HS_CONN_HANDLE_NONE; /* the link that has subscribed to notifications, if any */
 static uint8_t s_muid[4]; /* our MIDI-CI id, chosen at start */
 static void (*s_sink)(const uint8_t *bytes, size_t n);
 
@@ -138,6 +139,9 @@ static int gap_event(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_DISCONNECT:
         ESP_LOGI(TAG, "disconnected reason=%d", event->disconnect.reason);
         s_conn = BLE_HS_CONN_HANDLE_NONE;
+        if (s_notify_conn == event->disconnect.conn.conn_handle) {
+            s_notify_conn = BLE_HS_CONN_HANDLE_NONE;
+        }
         advertise();
         return 0;
     case BLE_GAP_EVENT_ADV_COMPLETE:
@@ -146,6 +150,13 @@ static int gap_event(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_SUBSCRIBE:
         ESP_LOGI(TAG, "subscribe attr=%u notify=%d indicate=%d", event->subscribe.attr_handle, event->subscribe.cur_notify,
                  event->subscribe.cur_indicate);
+        if (event->subscribe.attr_handle == s_chr_handle) {
+            if (event->subscribe.cur_notify) {
+                s_notify_conn = event->subscribe.conn_handle;
+            } else if (s_notify_conn == event->subscribe.conn_handle) {
+                s_notify_conn = BLE_HS_CONN_HANDLE_NONE;
+            }
+        }
         return 0;
     case BLE_GAP_EVENT_MTU:
         ESP_LOGI(TAG, "mtu=%u", event->mtu.value);
@@ -227,6 +238,21 @@ static int chr_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_gat
         }
     }
     return 0;
+}
+
+/* What the pedal sent, to the phone or tablet that has subscribed. Dropped when none has. */
+void tonerelay_midi_ble_notify_usb(const uint8_t pkt[4])
+{
+    uint16_t conn = s_notify_conn;
+    uint8_t out[6];
+    size_t len = blemidi_encode_usb_event(pkt, (uint32_t)(esp_timer_get_time() / 1000), out, sizeof(out));
+    if (conn == BLE_HS_CONN_HANDLE_NONE || len == 0) {
+        return;
+    }
+    struct os_mbuf *om = ble_hs_mbuf_from_flat(out, (uint16_t)len);
+    if (om && ble_gatts_notify_custom(conn, s_chr_handle, om) != 0) {
+        ESP_LOGD(TAG, "notify dropped");
+    }
 }
 
 static const struct ble_gatt_svc_def s_svcs[] = {
@@ -332,5 +358,6 @@ void tonerelay_midi_ble_start(void) {}
 bool tonerelay_midi_ble_up(void) { return false; }
 void tonerelay_midi_set_sink(void (*sink)(const uint8_t *bytes, size_t n)) { (void)sink; }
 void tonerelay_midi_ble_forget_bonds(void) {}
+void tonerelay_midi_ble_notify_usb(const uint8_t pkt[4]) { (void)pkt; }
 
 #endif

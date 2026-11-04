@@ -149,3 +149,20 @@ size_t usbmidi_encode(usbmidi_enc_t *e, const uint8_t *in, size_t len, uint8_t *
     }
     return w;
 }
+
+size_t blemidi_encode_usb_event(const uint8_t pkt[4], uint32_t ms, uint8_t *out, size_t cap)
+{
+    uint8_t cin = pkt[0] & 0x0F;
+    if (cin < 0x8 || cin > 0xE || cap < 6 || (pkt[1] & 0xF0) != (uint8_t)(cin << 4)) {
+        return 0;
+    }
+    size_t body = (cin == 0xC || cin == 0xD) ? 2 : 3;
+    out[0] = 0x80 | ((ms >> 7) & 0x3F);
+    out[1] = 0x80 | (ms & 0x7F);
+    out[2] = pkt[1];
+    out[3] = pkt[2] & 0x7F;
+    if (body == 3) {
+        out[4] = pkt[3] & 0x7F;
+    }
+    return 2 + body;
+}

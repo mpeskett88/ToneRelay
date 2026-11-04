@@ -101,6 +101,8 @@ void tonerelay_ble_start(void);
  * logs them until a destination is set. */
 void tonerelay_midi_ble_start(void);
 bool tonerelay_midi_ble_up(void);
+/* One USB-MIDI event packet from the pedal, sent on as a BLE MIDI notification to the connected phone, if one has subscribed. */
+void tonerelay_midi_ble_notify_usb(const uint8_t pkt[4]);
 void tonerelay_midi_set_sink(void (*sink)(const uint8_t *bytes, size_t n));
 void tonerelay_midi_ble_forget_bonds(void); /* forgets every paired phone and tablet (the factory reset calls it) */
 

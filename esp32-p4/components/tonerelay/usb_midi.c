@@ -17,8 +17,8 @@
 /*
  * MIDI to the pedal over its USB MIDI interface (the HX Stomp has one next to the Helix interface that helix_usb uses). This is a
  * second USB client, so it works whether or not a Helrig session is open. It claims the MIDI streaming interface as soon as the pedal
- * enumerates, sends what tonerelay_usb_midi_send() is given, and reads and drops whatever the pedal sends back (a device whose MIDI
- * output nobody reads can stall).
+ * enumerates, sends what tonerelay_usb_midi_send() is given, and reads what the pedal sends back (a device whose MIDI output nobody reads can
+ * stall) and passes its channel messages on to the Bluetooth MIDI link.
  */
 
 #define TAG "usb_midi"
@@ -54,6 +54,11 @@ static void out_cb(usb_transfer_t *x)
 
 static void in_cb(usb_transfer_t *x)
 {
+    if (x->status == USB_TRANSFER_STATUS_COMPLETED) {
+        for (int i = 0; i + 4 <= x->actual_num_bytes; i += 4) {
+            tonerelay_midi_ble_notify_usb(x->data_buffer + i); /* on to the tablet; only channel messages go */
+        }
+    }
     if (x->status == USB_TRANSFER_STATUS_COMPLETED && s_ready && usb_host_transfer_submit(x) == ESP_OK) {
         return; /* what the pedal sent is dropped, and the next read is posted (still in flight) */
     }
