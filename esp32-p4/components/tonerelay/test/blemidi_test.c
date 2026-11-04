@@ -106,18 +106,26 @@ int main(void)
       n += usbmidi_encode(&e, s2, 3, out + n, sizeof(out) - n);
       ok = n == 8 && out[0] == 0x04 && out[1] == 0xF0 && out[2] == 0x7E && out[3] == 0x01 && out[4] == 0x06 && out[5] == 0x02 && out[6] == 0xF7;
       printf(ok ? "ok   usb split sysex\n" : "FAIL usb split sysex\n"); failures += !ok; }
-    { /* pedal to BLE: program change and snapshot CC from the bench log, then things that are not passed on */
-      uint8_t out[8]; size_t n;
+    { /* pedal to BLE: program change and snapshot CC from the bench log, batching, and what is not passed on */
+      uint8_t out[16]; size_t n, used = 0;
       const uint8_t pc[4] = {0x0C, 0xC6, 0x71, 0x00}, cc[4] = {0x0B, 0xB6, 0x45, 0x02}, clk[4] = {0x0F, 0xF8, 0, 0}, sx[4] = {0x04, 0xF0, 0x7E, 0x01};
-      n = blemidi_encode_usb_event(pc, 0x1234, out, sizeof(out));
-      int ok = n == 4 && out[0] == (0x80 | ((0x1234 >> 7) & 0x3F)) && out[1] == (0x80 | (0x1234 & 0x7F)) && out[2] == 0xC6 && out[3] == 0x71;
+      n = blemidi_encode_usb_events(pc, 4, 0x1234, out, sizeof(out), &used);
+      int ok = n == 4 && used == 4 && out[0] == (0x80 | ((0x1234 >> 7) & 0x3F)) && out[1] == (0x80 | (0x1234 & 0x7F)) && out[2] == 0xC6 && out[3] == 0x71;
       printf(ok ? "ok   pedal program change\n" : "FAIL pedal program change\n"); failures += !ok;
-      n = blemidi_encode_usb_event(cc, 0, out, sizeof(out));
+      n = blemidi_encode_usb_events(cc, 4, 0, out, sizeof(out), &used);
       ok = n == 5 && out[2] == 0xB6 && out[3] == 0x45 && out[4] == 0x02;
       printf(ok ? "ok   pedal control change\n" : "FAIL pedal control change\n"); failures += !ok;
-      ok = blemidi_encode_usb_event(clk, 0, out, sizeof(out)) == 0 && blemidi_encode_usb_event(sx, 0, out, sizeof(out)) == 0 &&
-           blemidi_encode_usb_event(pc, 0, out, 5) == 0;
-      printf(ok ? "ok   pedal clock, sysex, small buffer not passed\n" : "FAIL pedal not-passed cases\n"); failures += !ok; }
+      uint8_t two[8]; memcpy(two, pc, 4); memcpy(two + 4, cc, 4);
+      n = blemidi_encode_usb_events(two, 8, 0, out, sizeof(out), &used);
+      ok = n == 1 + 3 + 4 && used == 8 && out[2] == 0xC6 && out[5] == 0xB6 && out[4] >= 0x80;
+      printf(ok ? "ok   pedal two messages, one packet\n" : "FAIL pedal two messages\n"); failures += !ok;
+      n = blemidi_encode_usb_events(two, 8, 0, out, 5, &used); /* room for one message only */
+      ok = n == 4 && used == 4 && out[2] == 0xC6;
+      printf(ok ? "ok   pedal batch stops when full\n" : "FAIL pedal batch full\n"); failures += !ok;
+      uint8_t skip[8]; memcpy(skip, clk, 4); memcpy(skip + 4, sx, 4);
+      n = blemidi_encode_usb_events(skip, 8, 0, out, sizeof(out), &used);
+      ok = n == 0 && used == 8;
+      printf(ok ? "ok   pedal clock and sysex not passed\n" : "FAIL pedal not-passed cases\n"); failures += !ok; }
     printf(failures ? "%d FAILED\n" : "all passed\n", failures);
     return failures != 0;
 }
