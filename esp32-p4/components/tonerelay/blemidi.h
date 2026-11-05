@@ -27,6 +27,12 @@ size_t blemidi_ci_discovery_reply(const uint8_t *msg, size_t len, const uint8_t 
  * counter. Returns the packet length, or 0 if `cap` is too small. */
 size_t blemidi_encode_sysex(const uint8_t *msg, size_t len, uint32_t ms, uint8_t *out, size_t cap);
 
+/* USB-MIDI event packets from the pedal (4 bytes each) as one BLE MIDI packet: the header, then a timestamp and the message for each.
+ * Only channel messages (code index 8 to E) are passed on; SysEx, clock and other system messages are skipped. Stops when the next
+ * message would not fit in `cap` and sets `*used` to how many input bytes were handled, so the caller sends what is left in another
+ * packet. Returns the packet length, 0 if there was nothing to send. `ms` is any millisecond counter. */
+size_t blemidi_encode_usb_events(const uint8_t *pkts, size_t len, uint32_t ms, uint8_t *out, size_t cap, size_t *used);
+
 /*
  * MIDI bytes to USB-MIDI event packets (USB MIDI class 1.0: four bytes each, cable number 0). The encoder keeps what it needs between
  * calls (running status, a SysEx still open), so feed it the stream in any pieces. It writes whole packets to `out`, up to `cap` bytes

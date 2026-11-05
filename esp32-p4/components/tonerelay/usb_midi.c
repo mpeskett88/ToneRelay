@@ -17,8 +17,8 @@
 /*
  * MIDI to the pedal over its USB MIDI interface (the HX Stomp has one next to the Helix interface that helix_usb uses). This is a
  * second USB client, so it works whether or not a Helrig session is open. It claims the MIDI streaming interface as soon as the pedal
- * enumerates, sends what tonerelay_usb_midi_send() is given, and reads and drops whatever the pedal sends back (a device whose MIDI
- * output nobody reads can stall).
+ * enumerates, sends what tonerelay_usb_midi_send() is given, and reads what the pedal sends back (a device whose MIDI output nobody reads can
+ * stall) and passes its channel messages on to the Bluetooth MIDI link.
  */
 
 #define TAG "usb_midi"
@@ -52,8 +52,66 @@ static void out_cb(usb_transfer_t *x)
     xSemaphoreGive(s_out_done);
 }
 
+/* The pedal sends back what it is sent on its MIDI output (a MIDI Thru), so each packet that went to it is remembered for a moment and
+ * the same packet coming back is not passed to the phone: it would only hear itself. */
+#define ECHO_SLOTS 64
+#define ECHO_MS 400
+static struct {
+    uint32_t pkt;
+    uint32_t ms;
+} s_echo[ECHO_SLOTS];
+static int s_echo_next;
+static portMUX_TYPE s_echo_mux = portMUX_INITIALIZER_UNLOCKED;
+
+static uint32_t now_ms(void)
+{
+    return (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+}
+
+static void echo_remember(const uint8_t *p)
+{
+    uint32_t v;
+    memcpy(&v, p, 4);
+    portENTER_CRITICAL(&s_echo_mux);
+    s_echo[s_echo_next].pkt = v;
+    s_echo[s_echo_next].ms = now_ms();
+    s_echo_next = (s_echo_next + 1) % ECHO_SLOTS;
+    portEXIT_CRITICAL(&s_echo_mux);
+}
+
+/* True if `p` is the packet that was sent to the pedal a moment ago; the match is used up. */
+static bool echo_take(const uint8_t *p)
+{
+    uint32_t v, now = now_ms();
+    bool hit = false;
+    memcpy(&v, p, 4);
+    portENTER_CRITICAL(&s_echo_mux);
+    for (int i = 0; i < ECHO_SLOTS; i++) {
+        if (s_echo[i].pkt == v && s_echo[i].ms != 0 && now - s_echo[i].ms < ECHO_MS) {
+            s_echo[i].ms = 0;
+            hit = true;
+            break;
+        }
+    }
+    portEXIT_CRITICAL(&s_echo_mux);
+    return hit;
+}
+
 static void in_cb(usb_transfer_t *x)
 {
+    if (x->status == USB_TRANSFER_STATUS_COMPLETED) {
+        uint8_t fresh[128];
+        size_t n = 0;
+        for (int i = 0; i + 4 <= x->actual_num_bytes && n + 4 <= sizeof(fresh); i += 4) {
+            if (!echo_take(x->data_buffer + i)) {
+                memcpy(fresh + n, x->data_buffer + i, 4);
+                n += 4;
+            }
+        }
+        if (n > 0) {
+            tonerelay_midi_ble_notify_usb(fresh, n); /* on to the tablet; only channel messages go */
+        }
+    }
     if (x->status == USB_TRANSFER_STATUS_COMPLETED && s_ready && usb_host_transfer_submit(x) == ESP_OK) {
         return; /* what the pedal sent is dropped, and the next read is posted (still in flight) */
     }
@@ -309,6 +367,7 @@ void tonerelay_usb_midi_send(const uint8_t *bytes, size_t n)
         size_t m = n - i > 32 ? 32 : n - i;
         size_t w = usbmidi_encode(&s_enc, bytes + i, m, packets, sizeof(packets));
         for (size_t j = 0; j < w; j += 4) {
+            echo_remember(packets + j);
             xQueueSend(s_q, packets + j, 0); /* a full queue drops the message: the pedal is not keeping up */
         }
     }

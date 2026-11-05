@@ -149,3 +149,31 @@ size_t usbmidi_encode(usbmidi_enc_t *e, const uint8_t *in, size_t len, uint8_t *
     }
     return w;
 }
+
+size_t blemidi_encode_usb_events(const uint8_t *pkts, size_t len, uint32_t ms, uint8_t *out, size_t cap, size_t *used)
+{
+    size_t w = 0, i = 0;
+    for (; i + 4 <= len; i += 4) {
+        const uint8_t *p = pkts + i;
+        uint8_t cin = p[0] & 0x0F;
+        if (cin < 0x8 || cin > 0xE || (p[1] & 0xF0) != (uint8_t)(cin << 4)) {
+            continue; /* not a channel message: not passed on */
+        }
+        size_t body = (cin == 0xC || cin == 0xD) ? 2 : 3;
+        size_t need = (w == 0 ? 1 : 0) + 1 + body;
+        if (w + need > cap) {
+            break; /* the rest goes in the next packet */
+        }
+        if (w == 0) {
+            out[w++] = 0x80 | ((ms >> 7) & 0x3F);
+        }
+        out[w++] = 0x80 | (ms & 0x7F);
+        out[w++] = p[1];
+        out[w++] = p[2] & 0x7F;
+        if (body == 3) {
+            out[w++] = p[3] & 0x7F;
+        }
+    }
+    *used = i;
+    return w;
+}
